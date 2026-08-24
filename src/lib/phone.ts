@@ -24,7 +24,12 @@ export function normalizeLocalPhone(
 ): { value: string; error: null } | { value: null; error: string } {
   const digits = input.trim().replace(/[\s+-]/g, "");
   if (!digits) return { value: null, error: "Phone is required" };
-  if (/^91/.test(digits) || digits.length > 10) {
+  // Length alone catches a duplicated country code (e.g. typing all 12
+  // digits of "919876543210" into this field). Checking for a "91" prefix
+  // on top of that was wrong — plenty of legitimate 10-digit numbers start
+  // with 9 then 1 (e.g. 9123456789), and that check flagged them as if the
+  // country code had been re-typed.
+  if (digits.length > 10) {
     return {
       value: null,
       error: "Enter only the 10-digit number — +91 is added automatically",
