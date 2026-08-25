@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "../lib/supabase";
 import { useAuth } from "../contexts/AuthContext";
 import { normalizeLocalPhone } from "../lib/phone";
 import { PulseMark } from "../components/PulseMark";
@@ -55,7 +54,7 @@ export function Login() {
   const [lockedUntil, setLockedUntil] = useState<number | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const navigate = useNavigate();
-  const { setDisplayName } = useAuth();
+  const { completeLogin } = useAuth();
 
   useEffect(() => {
     if (!lockedUntil) return;
@@ -181,17 +180,17 @@ export function Login() {
         return;
       }
 
-      const { error: sessionError } = await supabase.auth.setSession({
-        access_token: body.access_token,
-        refresh_token: body.refresh_token,
-      });
+      const { error: sessionError } = await completeLogin(
+        body.access_token,
+        body.refresh_token,
+        body.name ?? staff.name,
+      );
       if (sessionError) {
         setError("Couldn't start your session — try again");
         setPin("");
         return;
       }
 
-      setDisplayName(body.name ?? staff.name);
       navigate("/");
     } catch {
       setError("Couldn't reach the server — check your connection");

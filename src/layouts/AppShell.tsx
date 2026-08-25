@@ -10,7 +10,7 @@ import clsx from "clsx";
 
 export function AppShell() {
   const navigate = useNavigate();
-  const { claims } = useAuth();
+  const { claims, name, organizationName } = useAuth();
 
   useEffect(() => {
     initOfflineQueue();
@@ -42,12 +42,19 @@ export function AppShell() {
         />
         <div className="relative">
           <div className="mb-10 flex items-center gap-2.5 px-1 text-white">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/10">
               <PulseMark className="h-4 w-6 text-ember" />
             </div>
-            <span className="font-display text-lg font-semibold tracking-tight">
-              Kinetiq
-            </span>
+            <div className="min-w-0">
+              <span className="block font-display text-lg font-semibold leading-tight tracking-tight">
+                Kinetiq
+              </span>
+              {organizationName && (
+                <span className="block truncate text-xs text-white/50">
+                  {organizationName}
+                </span>
+              )}
+            </div>
           </div>
           <nav className="space-y-1">
             <NavLink to="/" end className={linkClass}>
@@ -76,6 +83,19 @@ export function AppShell() {
           </nav>
         </div>
         <div className="relative border-t border-white/10 pt-4">
+          <div className="mb-2 flex items-center gap-2.5 px-1 py-1">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 font-display text-xs font-semibold text-white">
+              {(name ?? claims?.role ?? "?").charAt(0).toUpperCase()}
+            </span>
+            <div className="min-w-0">
+              <span className="block truncate text-sm font-medium text-white">
+                {name ?? "Signed in"}
+              </span>
+              <span className="block text-xs capitalize text-white/50">
+                {claims?.role.replace("_", " ")}
+              </span>
+            </div>
+          </div>
           <PendingSyncIndicator />
           <button
             onClick={handleLogout}
