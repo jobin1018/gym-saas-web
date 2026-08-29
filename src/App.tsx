@@ -7,11 +7,30 @@ import { Members } from "./pages/Members";
 import { ImportMembers } from "./pages/ImportMembers";
 import { Revenue } from "./pages/Revenue";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import { CoachShell } from "./pages/coach/CoachShell";
+import { CoachClients } from "./pages/coach/CoachClients";
+import { ClientDetail } from "./pages/coach/ClientDetail";
+import { CoachShell as RealCoachShell } from "./pages/coachReal/CoachShell";
+import { CoachClients as RealCoachClients } from "./pages/coachReal/CoachClients";
+import { ClientDetail as RealClientDetail } from "./pages/coachReal/ClientDetail";
 
 function RequireAuth({ children }: { children: ReactElement }) {
-  const { status } = useAuth();
+  const { status, claims } = useAuth();
   if (status === "loading") return null;
   if (status === "unauthenticated") return <Navigate to="/login" replace />;
+  // Coaches have their own section (/coach) with no RLS access to the
+  // owner/front_desk views this shell renders (memberships, attendance,
+  // revenue aren't coach-scoped) — redirect rather than show a broken
+  // Overview/Members/Revenue.
+  if (claims?.role === "coach") return <Navigate to="/coach" replace />;
+  return children;
+}
+
+function RequireCoach({ children }: { children: ReactElement }) {
+  const { status, claims } = useAuth();
+  if (status === "loading") return null;
+  if (status === "unauthenticated") return <Navigate to="/login" replace />;
+  if (claims?.role !== "coach") return <Navigate to="/" replace />;
   return children;
 }
 
@@ -49,6 +68,32 @@ export default function App() {
                 </RequireOwner>
               }
             />
+          </Route>
+
+          {/* UI-only coach prototype, mock data, no auth — see mockCoachData.ts.
+              Deliberately outside RequireAuth/AppShell: not part of the real
+              app yet, just a standalone route to view and iterate on. Left
+              as-is for reference — the real version below is a fully
+              separate set of files, not a conversion of this one. */}
+          <Route path="/coach-demo" element={<CoachShell />}>
+            <Route index element={<CoachClients />} />
+            <Route path=":clientId" element={<ClientDetail />} />
+          </Route>
+
+          {/* Real coach section — real Supabase queries, RLS-scoped by
+              assignment. Package-id-keyed (not member-id-keyed like the
+              mock version) since a member can have more than one pt_package
+              over time; see RealClientDetail's own comment. */}
+          <Route
+            path="/coach"
+            element={
+              <RequireCoach>
+                <RealCoachShell />
+              </RequireCoach>
+            }
+          >
+            <Route index element={<RealCoachClients />} />
+            <Route path=":packageId" element={<RealClientDetail />} />
           </Route>
         </Routes>
       </BrowserRouter>

@@ -1,9 +1,14 @@
 import { supabase } from "./supabase";
 
 export type SessionClaims = {
-  role: "owner" | "front_desk";
+  role: "owner" | "front_desk" | "coach";
   organizationId: string;
   locationId: string | null;
+  // public.users.id (distinct from auth.users' own sub/uid) — the RLS
+  // identity a coach's own rows are matched against (coach_id, recorded_by,
+  // etc.). Owner/front_desk get this too since the hook stamps it
+  // unconditionally, but only coach-scoped writes currently need it.
+  userId: string;
 };
 
 function decodeAccessToken(accessToken: string): Record<string, unknown> | null {
@@ -31,12 +36,18 @@ export function claimsFromAccessToken(accessToken: string): SessionClaims | null
   const decoded = decodeAccessToken(accessToken);
   const orgId = decoded?.org_id;
   const role = decoded?.app_role;
-  if (typeof orgId !== "string" || (role !== "owner" && role !== "front_desk")) {
+  const userId = decoded?.user_id;
+  if (
+    typeof orgId !== "string" ||
+    typeof userId !== "string" ||
+    (role !== "owner" && role !== "front_desk" && role !== "coach")
+  ) {
     return null;
   }
   return {
     role,
     organizationId: orgId,
+    userId,
     locationId:
       typeof decoded?.location_id === "string" ? decoded.location_id : null,
   };

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { X, RefreshCw } from "lucide-react";
 import clsx from "clsx";
 import {
+  addMonths,
   createMember,
   isNetworkError,
   updateMemberAndMembership,
@@ -13,8 +14,14 @@ import {
   retryPendingWrites,
 } from "../lib/offlineQueue";
 import { normalizeLocalPhone, toLocalDigits } from "../lib/phone";
+import { AssignCoachSection } from "./AssignCoachSection";
 
-export type Plan = { id: string; name: string; amount: number };
+export type Plan = {
+  id: string;
+  name: string;
+  amount: number;
+  duration_months: number;
+};
 
 export type MemberFormInitial = {
   member_id: string;
@@ -70,6 +77,11 @@ export function MemberFormModal({
   const [serverError, setServerError] = useState("");
 
   const planChanged = mode === "edit" && initial && planId !== initial.plan_id;
+  const selectedPlan = plans.find((p) => p.id === planId);
+  const renewalPreview =
+    selectedPlan && startDate
+      ? addMonths(startDate, selectedPlan.duration_months)
+      : null;
 
   function validate(): boolean {
     const errors: Record<string, string> = {};
@@ -255,7 +267,10 @@ export function MemberFormModal({
             >
               {plans.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name} — ₹{p.amount.toLocaleString("en-IN")}/mo
+                  {p.name} — ₹{p.amount.toLocaleString("en-IN")}
+                  {p.duration_months === 1
+                    ? "/mo"
+                    : ` / ${p.duration_months} months`}
                 </option>
               ))}
             </select>
@@ -281,10 +296,25 @@ export function MemberFormModal({
               onChange={(e) => setStartDate(e.target.value)}
               className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
             />
-            {mode === "edit" && (
+            {mode === "edit" ? (
               <p className="mt-1 text-xs text-muted">
                 Editing this won't recalculate the current renewal date.
               </p>
+            ) : (
+              renewalPreview && (
+                <p className="mt-1 text-xs text-muted">
+                  Renews on{" "}
+                  <span className="font-medium text-ink">
+                    {new Date(renewalPreview).toLocaleDateString("en-IN", {
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                    })}
+                  </span>{" "}
+                  ({selectedPlan!.duration_months}{" "}
+                  {selectedPlan!.duration_months === 1 ? "month" : "months"})
+                </p>
+              )
             )}
           </div>
 
@@ -339,6 +369,13 @@ export function MemberFormModal({
             </button>
           </div>
         </form>
+
+        {/* Deliberately outside the <form> above — real write, but its own
+            isolated component/submit path, not part of handleSubmit above.
+            See AssignCoachSection.tsx. */}
+        {mode === "edit" && initial && (
+          <AssignCoachSection memberId={initial.member_id} />
+        )}
       </div>
     </div>
   );

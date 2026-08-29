@@ -6,11 +6,13 @@ import {
   type EditMemberPayload,
   type NewMemberPayload,
 } from "./memberWrites";
+import { logSession, type LogSessionPayload } from "./coachWrites";
 
 type PendingWrite =
   | { id: string; kind: "add_member"; payload: NewMemberPayload; createdAt: string }
   | { id: string; kind: "edit_member"; payload: EditMemberPayload; createdAt: string }
-  | { id: string; kind: "csv_import"; payload: CsvImportPayload; createdAt: string };
+  | { id: string; kind: "csv_import"; payload: CsvImportPayload; createdAt: string }
+  | { id: string; kind: "log_session"; payload: LogSessionPayload; createdAt: string };
 
 const STORAGE_KEY = "pending_writes";
 
@@ -55,7 +57,8 @@ export function queuePendingWrite(
 async function execute(write: PendingWrite): Promise<void> {
   if (write.kind === "add_member") return createMember(write.payload);
   if (write.kind === "edit_member") return updateMemberAndMembership(write.payload);
-  return importMembersBatch(write.payload);
+  if (write.kind === "csv_import") return importMembersBatch(write.payload);
+  await logSession(write.payload);
 }
 
 let retrying = false;
