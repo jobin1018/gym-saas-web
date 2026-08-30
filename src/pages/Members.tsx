@@ -71,7 +71,7 @@ export function Members() {
     refresh();
     supabase
       .from("membership_plans")
-      .select("id, name, amount, duration_months")
+      .select("id, name, amount")
       .eq("active", true)
       .then(({ data }) => data && setPlans(data));
   }, []);

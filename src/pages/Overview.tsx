@@ -8,7 +8,11 @@ import { AlertTriangle, CheckCircle2, Users } from "lucide-react";
 
 type Renewal = {
   id: string;
-  plan: { amount: number };
+  // The signup-time snapshot (plan.amount * duration_months), not a live
+  // plan.amount lookup — a renewal can now span multiple months and the
+  // plan's rate may have changed since signup. See
+  // 20260829099000_move_duration_to_memberships.sql.
+  total_price: number | null;
   current_period_end: string;
   status: "active" | "past_due" | "expired" | "cancelled";
   members: { name: string; phone: string };
@@ -24,7 +28,7 @@ export function Overview() {
     supabase
       .from("memberships")
       .select(
-        "id, plan:membership_plans(amount), current_period_end, status, members(name, phone)",
+        "id, total_price, current_period_end, status, members(name, phone)",
       )
       .order("current_period_end", { ascending: true })
       .limit(20)
@@ -39,7 +43,7 @@ export function Overview() {
 
   const overdue = renewals.filter((r) => r.status === "past_due");
   const overdueAmount = overdue.reduce(
-    (sum, r) => sum + Number(r.plan?.amount ?? 0),
+    (sum, r) => sum + Number(r.total_price ?? 0),
     0,
   );
 
@@ -120,7 +124,7 @@ export function Overview() {
                   <p className="text-xs text-muted">{r.members?.phone}</p>
                 </td>
                 <td className="px-5 py-3.5">
-                  ₹{Number(r.plan?.amount ?? 0).toLocaleString("en-IN")}
+                  ₹{Number(r.total_price ?? 0).toLocaleString("en-IN")}
                 </td>
                 <td className="px-5 py-3.5">
                   {new Date(r.current_period_end).toLocaleDateString("en-IN")}

@@ -47,11 +47,16 @@ export function ImportMembers() {
 
   async function handleImport() {
     const planByName = new Map(plans.map((p) => [p.name, p.id]));
+    // CSV format doesn't carry a duration column (see the "CSV columns" hint
+    // above) — every imported row gets the old implicit default of 1 month.
+    // A per-row duration column is a follow-up if bulk multi-month imports
+    // turn out to be needed.
     const importRows: CsvImportRow[] = validRows.map((r) => ({
       name: r.name,
       phone: r.phone,
       plan_id: planByName.get(r.plan_name)!,
       start_date: r.start_date,
+      duration_months: 1,
     }));
 
     setImporting(true);

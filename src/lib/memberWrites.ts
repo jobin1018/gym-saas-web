@@ -6,6 +6,7 @@ export type NewMemberPayload = {
   phone: string;
   plan_id: string;
   start_date: string;
+  duration_months: number;
   whatsapp_opt_in: boolean;
 };
 
@@ -25,6 +26,7 @@ export type CsvImportRow = {
   phone: string;
   plan_id: string;
   start_date: string;
+  duration_months: number;
 };
 
 export type CsvImportPayload = {
@@ -34,8 +36,10 @@ export type CsvImportPayload = {
 // Add `months` calendar months to a YYYY-MM-DD string, clamping to the end of
 // the target month — same semantics as Postgres
 // `date + (n || ' months')::interval` and razorpay-webhook's addMonths()
-// (2026-01-31 + 1 month -> 2026-02-28). `months` is the plan's
-// duration_months (1 for legacy monthly plans).
+// (2026-01-31 + 1 month -> 2026-02-28). `months` is the MEMBERSHIP's
+// duration_months (a free 1..36 entered at signup — see
+// 20260829099000_move_duration_to_memberships.sql; it moved here from
+// membership_plans, which now only carries a monthly rate).
 export function addMonths(dateStr: string, months: number): string {
   const [year, month, day] = dateStr.split("-").map(Number);
   const total = year * 12 + (month - 1) + months;
@@ -48,23 +52,6 @@ export function addMonths(dateStr: string, months: number): string {
     String(targetMonth).padStart(2, "0"),
     String(clampedDay).padStart(2, "0"),
   ].join("-");
-}
-
-// Look up how many months one billing period is for a set of plans.
-// current_period_end is start_date + that many months (was hardcoded +1
-// before membership_plans.duration_months existed).
-async function planDurations(
-  planIds: string[],
-): Promise<Map<string, number>> {
-  const unique = [...new Set(planIds)];
-  const { data, error } = await supabase
-    .from("membership_plans")
-    .select("id, duration_months")
-    .in("id", unique);
-  if (error) throw error;
-  const map = new Map<string, number>();
-  for (const row of data ?? []) map.set(row.id, row.duration_months ?? 1);
-  return map;
 }
 
 // Two inserts, not one transaction — PostgREST doesn't give the browser a way
@@ -92,17 +79,16 @@ export async function createMember(payload: NewMemberPayload): Promise<void> {
     .single();
   if (memberError) throw memberError;
 
-  const durations = await planDurations([payload.plan_id]);
+  // total_price is intentionally NOT sent — trg_memberships_derive_total_price
+  // snapshots plan.amount * duration_months on insert when it's omitted.
   const { error: membershipError } = await supabase.from("memberships").insert({
     organization_id,
     member_id: member.id,
     plan_id: payload.plan_id,
     status: "active",
     start_date: payload.start_date,
-    current_period_end: addMonths(
-      payload.start_date,
-      durations.get(payload.plan_id) ?? 1,
-    ),
+    duration_months: payload.duration_months,
+    current_period_end: addMonths(payload.start_date, payload.duration_months),
   });
   if (membershipError) throw membershipError;
 }
@@ -156,7 +142,6 @@ export async function importMembersBatch(
     .select("id");
   if (membersError) throw membersError;
 
-  const durations = await planDurations(payload.rows.map((r) => r.plan_id));
   const { error: membershipsError } = await supabase.from("memberships").insert(
     members.map((member, i) => ({
       organization_id,
@@ -164,9 +149,10 @@ export async function importMembersBatch(
       plan_id: payload.rows[i].plan_id,
       status: "active" as const,
       start_date: payload.rows[i].start_date,
+      duration_months: payload.rows[i].duration_months,
       current_period_end: addMonths(
         payload.rows[i].start_date,
-        durations.get(payload.rows[i].plan_id) ?? 1,
+        payload.rows[i].duration_months,
       ),
     })),
   );

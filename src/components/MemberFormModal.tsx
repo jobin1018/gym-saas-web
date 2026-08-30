@@ -19,8 +19,7 @@ import { AssignCoachSection } from "./AssignCoachSection";
 export type Plan = {
   id: string;
   name: string;
-  amount: number;
-  duration_months: number;
+  amount: number; // monthly rate — duration lives on the membership, not the plan
 };
 
 export type MemberFormInitial = {
@@ -62,6 +61,12 @@ export function MemberFormModal({
     initial ? toLocalDigits(initial.phone) : "",
   );
   const [planId, setPlanId] = useState(initial?.plan_id ?? plans[0]?.id ?? "");
+  // Per-signup, not per-plan — a free integer entered here, not a fixed
+  // 1/3/6/12 tier list. Only meaningful in add mode: an existing membership's
+  // duration was fixed at signup and editing it here wouldn't recompute
+  // current_period_end/total_price anyway (same "won't reprorate" reasoning
+  // as start date below), so the edit form doesn't expose it.
+  const [durationMonths, setDurationMonths] = useState("1");
   const [startDate, setStartDate] = useState(
     initial?.start_date ?? new Date().toISOString().slice(0, 10),
   );
@@ -78,9 +83,18 @@ export function MemberFormModal({
 
   const planChanged = mode === "edit" && initial && planId !== initial.plan_id;
   const selectedPlan = plans.find((p) => p.id === planId);
+  const parsedDuration = Number(durationMonths);
+  const durationValid =
+    Number.isInteger(parsedDuration) && parsedDuration >= 1 && parsedDuration <= 36;
   const renewalPreview =
-    selectedPlan && startDate
-      ? addMonths(startDate, selectedPlan.duration_months)
+    mode === "add" && startDate && durationValid
+      ? addMonths(startDate, parsedDuration)
+      : null;
+  // What the signup-time trigger will snapshot into memberships.total_price —
+  // shown so the amount charged isn't a surprise before submit.
+  const totalPreview =
+    mode === "add" && selectedPlan && durationValid
+      ? selectedPlan.amount * parsedDuration
       : null;
 
   function validate(): boolean {
@@ -89,6 +103,8 @@ export function MemberFormModal({
     const phoneResult = normalizeLocalPhone(phone);
     if (phoneResult.error) errors.phone = phoneResult.error;
     if (!planId) errors.plan = "Select a plan";
+    if (mode === "add" && !durationValid)
+      errors.duration = "Enter a whole number of months between 1 and 36";
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
   }
@@ -109,6 +125,7 @@ export function MemberFormModal({
           phone: normalizedPhone,
           plan_id: planId,
           start_date: startDate,
+          duration_months: parsedDuration,
           whatsapp_opt_in: whatsappOptIn,
         });
       } else if (initial) {
@@ -134,6 +151,7 @@ export function MemberFormModal({
                 phone: normalizedPhone,
                 plan_id: planId,
                 start_date: startDate,
+                duration_months: parsedDuration,
                 whatsapp_opt_in: whatsappOptIn,
               }
             : {
@@ -267,10 +285,7 @@ export function MemberFormModal({
             >
               {plans.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name} — ₹{p.amount.toLocaleString("en-IN")}
-                  {p.duration_months === 1
-                    ? "/mo"
-                    : ` / ${p.duration_months} months`}
+                  {p.name} — ₹{p.amount.toLocaleString("en-IN")}/mo
                 </option>
               ))}
             </select>
@@ -285,6 +300,25 @@ export function MemberFormModal({
               </p>
             )}
           </div>
+
+          {mode === "add" && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted">
+                Duration (months)
+              </label>
+              <input
+                inputMode="numeric"
+                value={durationMonths}
+                onChange={(e) => setDurationMonths(e.target.value)}
+                className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
+              />
+              {fieldErrors.duration && (
+                <p className="mt-1 text-xs text-ember-dark">
+                  {fieldErrors.duration}
+                </p>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="mb-1 block text-xs font-medium text-muted">
@@ -311,8 +345,16 @@ export function MemberFormModal({
                       year: "numeric",
                     })}
                   </span>{" "}
-                  ({selectedPlan!.duration_months}{" "}
-                  {selectedPlan!.duration_months === 1 ? "month" : "months"})
+                  ({parsedDuration} {parsedDuration === 1 ? "month" : "months"})
+                  {totalPreview != null && (
+                    <>
+                      {" "}
+                      · Total{" "}
+                      <span className="font-medium text-ink">
+                        ₹{totalPreview.toLocaleString("en-IN")}
+                      </span>
+                    </>
+                  )}
                 </p>
               )
             )}
