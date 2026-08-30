@@ -1,6 +1,14 @@
 import { useEffect } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Users, IndianRupee, LogOut } from "lucide-react";
+import {
+  LayoutDashboard,
+  Users,
+  IndianRupee,
+  LogOut,
+  ClipboardList,
+  KeyRound,
+  Gauge,
+} from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../contexts/AuthContext";
 import { PulseMark } from "../components/PulseMark";
@@ -71,14 +79,37 @@ export function AppShell() {
               />
               Members
             </NavLink>
+            <NavLink to="/plans" className={linkClass}>
+              <ClipboardList
+                size={18}
+                className="transition-transform group-hover:scale-110"
+              />
+              Plans
+            </NavLink>
             {claims?.role === "owner" && (
-              <NavLink to="/revenue" className={linkClass}>
-                <IndianRupee
-                  size={18}
-                  className="transition-transform group-hover:scale-110"
-                />
-                Revenue
-              </NavLink>
+              <>
+                <NavLink to="/revenue" className={linkClass}>
+                  <IndianRupee
+                    size={18}
+                    className="transition-transform group-hover:scale-110"
+                  />
+                  Revenue
+                </NavLink>
+                <NavLink to="/dashboard" className={linkClass}>
+                  <Gauge
+                    size={18}
+                    className="transition-transform group-hover:scale-110"
+                  />
+                  Dashboard
+                </NavLink>
+                <NavLink to="/staff" className={linkClass}>
+                  <KeyRound
+                    size={18}
+                    className="transition-transform group-hover:scale-110"
+                  />
+                  Staff
+                </NavLink>
+              </>
             )}
           </nav>
         </div>

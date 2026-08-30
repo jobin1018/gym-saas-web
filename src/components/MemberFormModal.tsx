@@ -8,6 +8,7 @@ import {
   updateMemberAndMembership,
   type EditMemberPayload,
 } from "../lib/memberWrites";
+import { PLAN_AMOUNT_MIN, PLAN_AMOUNT_MAX } from "../lib/planWrites";
 import {
   getPendingWrites,
   queuePendingWrite,
@@ -40,6 +41,14 @@ const STATUS_OPTIONS: EditMemberPayload["status"][] = [
   "cancelled",
 ];
 
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+      {children}
+    </h3>
+  );
+}
+
 export function MemberFormModal({
   mode,
   initial,
@@ -67,6 +76,12 @@ export function MemberFormModal({
   // current_period_end/total_price anyway (same "won't reprorate" reasoning
   // as start date below), so the edit form doesn't expose it.
   const [durationMonths, setDurationMonths] = useState("1");
+  // Custom pricing: same add-mode-only scoping as duration, for the same
+  // reason — it feeds the signup-time total_price snapshot, which editing
+  // never touches. Toggling it on pre-fills the plan's own rate so front
+  // desk adjusts from there rather than typing a number from scratch.
+  const [customPriceEnabled, setCustomPriceEnabled] = useState(false);
+  const [customRate, setCustomRate] = useState("");
   const [startDate, setStartDate] = useState(
     initial?.start_date ?? new Date().toISOString().slice(0, 10),
   );
@@ -86,15 +101,26 @@ export function MemberFormModal({
   const parsedDuration = Number(durationMonths);
   const durationValid =
     Number.isInteger(parsedDuration) && parsedDuration >= 1 && parsedDuration <= 36;
+  const parsedCustomRate = Number(customRate);
+  const customRateValid =
+    !customPriceEnabled ||
+    (customRate.trim() !== "" &&
+      !Number.isNaN(parsedCustomRate) &&
+      parsedCustomRate >= PLAN_AMOUNT_MIN &&
+      parsedCustomRate <= PLAN_AMOUNT_MAX);
+  // The rate the total/renewal preview and the submit payload both use —
+  // the selected plan's list rate, or the front desk's override.
+  const effectiveRate = customPriceEnabled ? parsedCustomRate : selectedPlan?.amount;
   const renewalPreview =
     mode === "add" && startDate && durationValid
       ? addMonths(startDate, parsedDuration)
       : null;
-  // What the signup-time trigger will snapshot into memberships.total_price —
-  // shown so the amount charged isn't a surprise before submit.
+  // What the signup-time trigger (or the explicit override) will snapshot
+  // into memberships.total_price — shown so the amount charged isn't a
+  // surprise before submit.
   const totalPreview =
-    mode === "add" && selectedPlan && durationValid
-      ? selectedPlan.amount * parsedDuration
+    mode === "add" && effectiveRate != null && !Number.isNaN(effectiveRate) && durationValid
+      ? effectiveRate * parsedDuration
       : null;
 
   function validate(): boolean {
@@ -105,6 +131,8 @@ export function MemberFormModal({
     if (!planId) errors.plan = "Select a plan";
     if (mode === "add" && !durationValid)
       errors.duration = "Enter a whole number of months between 1 and 36";
+    if (mode === "add" && !customRateValid)
+      errors.customRate = `Enter an amount between ₹${PLAN_AMOUNT_MIN} and ₹${PLAN_AMOUNT_MAX.toLocaleString("en-IN")}`;
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
   }
@@ -117,6 +145,8 @@ export function MemberFormModal({
     setSubmitting(true);
     // validate() already confirmed this parses, so the assertion is safe.
     const normalizedPhone = normalizeLocalPhone(phone).value!;
+    const totalPriceOverride =
+      mode === "add" && customPriceEnabled ? parsedCustomRate * parsedDuration : undefined;
 
     try {
       if (mode === "add") {
@@ -127,6 +157,7 @@ export function MemberFormModal({
           start_date: startDate,
           duration_months: parsedDuration,
           whatsapp_opt_in: whatsappOptIn,
+          total_price_override: totalPriceOverride,
         });
       } else if (initial) {
         await updateMemberAndMembership({
@@ -153,6 +184,7 @@ export function MemberFormModal({
                 start_date: startDate,
                 duration_months: parsedDuration,
                 whatsapp_opt_in: whatsappOptIn,
+                total_price_override: totalPriceOverride,
               }
             : {
                 member_id: initial!.member_id,
@@ -194,7 +226,7 @@ export function MemberFormModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-4 backdrop-blur-sm">
-      <div className="animate-fade-in-up w-full max-w-md rounded-xl2 bg-white p-6 shadow-2xl">
+      <div className="animate-fade-in-up max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl2 bg-white p-6 shadow-2xl">
         <div className="mb-5 flex items-center justify-between">
           <h2 className="font-display text-lg font-semibold tracking-tight">
             {mode === "add" ? "Add member" : "Edit member"}
@@ -231,165 +263,215 @@ export function MemberFormModal({
           <p className="mb-4 text-sm text-ember-dark">{serverError}</p>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-muted">
-              Name
-            </label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
-            />
-            {fieldErrors.name && (
-              <p className="mt-1 text-xs text-ember-dark">{fieldErrors.name}</p>
-            )}
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs font-medium text-muted">
-              Phone
-            </label>
-            <div
-              className={clsx(
-                "flex items-stretch overflow-hidden rounded-lg border bg-white shadow-sm transition-shadow",
-                fieldErrors.phone ? "border-ember" : "border-line",
-                "focus-within:outline-none focus-within:ring-2 focus-within:ring-ember focus-within:ring-offset-2 focus-within:ring-offset-paper",
-              )}
-            >
-              <span className="flex items-center border-r border-line bg-paper px-3 text-sm font-medium text-muted">
-                +91
-              </span>
-              <input
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="98765 43210"
-                className="w-full px-3 py-2.5 text-sm outline-none"
-              />
-            </div>
-            {fieldErrors.phone && (
-              <p className="mt-1 text-xs text-ember-dark">
-                {fieldErrors.phone}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs font-medium text-muted">
-              Plan
-            </label>
-            <select
-              value={planId}
-              onChange={(e) => setPlanId(e.target.value)}
-              className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
-            >
-              {plans.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} — ₹{p.amount.toLocaleString("en-IN")}/mo
-                </option>
-              ))}
-            </select>
-            {fieldErrors.plan && (
-              <p className="mt-1 text-xs text-ember-dark">{fieldErrors.plan}</p>
-            )}
-            {planChanged && (
-              <p className="mt-1 text-xs text-amberflag">
-                Changing the plan doesn't adjust this cycle's billing —
-                proration isn't implemented, so the new amount only applies from
-                the next renewal.
-              </p>
-            )}
-          </div>
-
-          {mode === "add" && (
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* --- Basic info ------------------------------------------------ */}
+          <div className="space-y-4">
+            <SectionHeading>Basic info</SectionHeading>
             <div>
               <label className="mb-1 block text-xs font-medium text-muted">
-                Duration (months)
+                Name
               </label>
               <input
-                inputMode="numeric"
-                value={durationMonths}
-                onChange={(e) => setDurationMonths(e.target.value)}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
                 className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
               />
-              {fieldErrors.duration && (
+              {fieldErrors.name && (
+                <p className="mt-1 text-xs text-ember-dark">{fieldErrors.name}</p>
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted">
+                Phone
+              </label>
+              <div
+                className={clsx(
+                  "flex items-stretch overflow-hidden rounded-lg border bg-white shadow-sm transition-shadow",
+                  fieldErrors.phone ? "border-ember" : "border-line",
+                  "focus-within:outline-none focus-within:ring-2 focus-within:ring-ember focus-within:ring-offset-2 focus-within:ring-offset-paper",
+                )}
+              >
+                <span className="flex items-center border-r border-line bg-paper px-3 text-sm font-medium text-muted">
+                  +91
+                </span>
+                <input
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="98765 43210"
+                  className="w-full px-3 py-2.5 text-sm outline-none"
+                />
+              </div>
+              {fieldErrors.phone && (
                 <p className="mt-1 text-xs text-ember-dark">
-                  {fieldErrors.duration}
+                  {fieldErrors.phone}
                 </p>
               )}
             </div>
-          )}
-
-          <div>
-            <label className="mb-1 block text-xs font-medium text-muted">
-              Start date
-            </label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
-            />
-            {mode === "edit" ? (
-              <p className="mt-1 text-xs text-muted">
-                Editing this won't recalculate the current renewal date.
-              </p>
-            ) : (
-              renewalPreview && (
-                <p className="mt-1 text-xs text-muted">
-                  Renews on{" "}
-                  <span className="font-medium text-ink">
-                    {new Date(renewalPreview).toLocaleDateString("en-IN", {
-                      day: "numeric",
-                      month: "long",
-                      year: "numeric",
-                    })}
-                  </span>{" "}
-                  ({parsedDuration} {parsedDuration === 1 ? "month" : "months"})
-                  {totalPreview != null && (
-                    <>
-                      {" "}
-                      · Total{" "}
-                      <span className="font-medium text-ink">
-                        ₹{totalPreview.toLocaleString("en-IN")}
-                      </span>
-                    </>
-                  )}
-                </p>
-              )
-            )}
           </div>
 
-          {mode === "edit" && (
+          {/* --- Plan & pricing --------------------------------------------- */}
+          <div className="space-y-4 border-t border-line pt-5">
+            <SectionHeading>Plan &amp; pricing</SectionHeading>
             <div>
               <label className="mb-1 block text-xs font-medium text-muted">
-                Status
+                Plan
               </label>
               <select
-                value={status}
-                onChange={(e) =>
-                  setStatus(e.target.value as EditMemberPayload["status"])
-                }
+                value={planId}
+                onChange={(e) => setPlanId(e.target.value)}
                 className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
               >
-                {STATUS_OPTIONS.map((s) => (
-                  <option key={s} value={s}>
-                    {s.replace("_", " ")}
+                {plans.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} — ₹{p.amount.toLocaleString("en-IN")}/mo
                   </option>
                 ))}
               </select>
+              {fieldErrors.plan && (
+                <p className="mt-1 text-xs text-ember-dark">{fieldErrors.plan}</p>
+              )}
+              {planChanged && (
+                <p className="mt-1 text-xs text-amberflag">
+                  Changing the plan doesn't adjust this cycle's billing —
+                  proration isn't implemented, so the new amount only applies
+                  from the next renewal.
+                </p>
+              )}
             </div>
-          )}
 
-          <label className="flex items-center gap-2 rounded-lg border border-transparent px-1 py-1 text-sm transition-colors hover:border-line/60">
-            <input
-              type="checkbox"
-              checked={whatsappOptIn}
-              onChange={(e) => setWhatsappOptIn(e.target.checked)}
-              className="focus-ring h-4 w-4 rounded border-line text-ember accent-ember"
-            />
-            WhatsApp reminders opted in
-          </label>
+            {mode === "add" && (
+              <>
+                <label className="flex items-center gap-2 rounded-lg border border-transparent px-1 py-1 text-sm transition-colors hover:border-line/60">
+                  <input
+                    type="checkbox"
+                    checked={customPriceEnabled}
+                    onChange={(e) => {
+                      setCustomPriceEnabled(e.target.checked);
+                      // Pre-fill from the selected plan's rate so front desk
+                      // adjusts from a real starting point, not a blank field.
+                      if (e.target.checked && !customRate && selectedPlan) {
+                        setCustomRate(String(selectedPlan.amount));
+                      }
+                    }}
+                    className="focus-ring h-4 w-4 rounded border-line text-ember accent-ember"
+                  />
+                  Use a custom rate (discount / negotiated price)
+                </label>
+
+                {customPriceEnabled && (
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-muted">
+                      Custom monthly rate (₹)
+                    </label>
+                    <input
+                      inputMode="decimal"
+                      value={customRate}
+                      onChange={(e) => setCustomRate(e.target.value)}
+                      className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
+                    />
+                    {fieldErrors.customRate && (
+                      <p className="mt-1 text-xs text-ember-dark">
+                        {fieldErrors.customRate}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-muted">
+                    Duration (months)
+                  </label>
+                  <input
+                    inputMode="numeric"
+                    value={durationMonths}
+                    onChange={(e) => setDurationMonths(e.target.value)}
+                    className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
+                  />
+                  {fieldErrors.duration && (
+                    <p className="mt-1 text-xs text-ember-dark">
+                      {fieldErrors.duration}
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted">
+                Start date
+              </label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
+              />
+              {mode === "edit" ? (
+                <p className="mt-1 text-xs text-muted">
+                  Editing this won't recalculate the current renewal date.
+                </p>
+              ) : (
+                renewalPreview && (
+                  <p className="mt-1 text-xs text-muted">
+                    Renews on{" "}
+                    <span className="font-medium text-ink">
+                      {new Date(renewalPreview).toLocaleDateString("en-IN", {
+                        day: "numeric",
+                        month: "long",
+                        year: "numeric",
+                      })}
+                    </span>{" "}
+                    ({parsedDuration} {parsedDuration === 1 ? "month" : "months"})
+                    {totalPreview != null && (
+                      <>
+                        {" "}
+                        · Total{" "}
+                        <span className="font-medium text-ink">
+                          ₹{totalPreview.toLocaleString("en-IN")}
+                        </span>
+                      </>
+                    )}
+                  </p>
+                )
+              )}
+            </div>
+
+            {mode === "edit" && (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted">
+                  Status
+                </label>
+                <select
+                  value={status}
+                  onChange={(e) =>
+                    setStatus(e.target.value as EditMemberPayload["status"])
+                  }
+                  className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
+                >
+                  {STATUS_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s.replace("_", " ")}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {/* --- Notifications ------------------------------------------------ */}
+          <div className="space-y-4 border-t border-line pt-5">
+            <SectionHeading>Notifications</SectionHeading>
+            <label className="flex items-center gap-2 rounded-lg border border-transparent px-1 py-1 text-sm transition-colors hover:border-line/60">
+              <input
+                type="checkbox"
+                checked={whatsappOptIn}
+                onChange={(e) => setWhatsappOptIn(e.target.checked)}
+                className="focus-ring h-4 w-4 rounded border-line text-ember accent-ember"
+              />
+              WhatsApp reminders opted in
+            </label>
+          </div>
 
           <div className="flex justify-end gap-2 pt-2">
             <button

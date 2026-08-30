@@ -6,6 +6,9 @@ import { Overview } from "./pages/Overview";
 import { Members } from "./pages/Members";
 import { ImportMembers } from "./pages/ImportMembers";
 import { Revenue } from "./pages/Revenue";
+import { PlansAdmin } from "./pages/PlansAdmin";
+import { Staff } from "./pages/Staff";
+import { OwnerDashboard } from "./pages/OwnerDashboard";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { CoachShell } from "./pages/coach/CoachShell";
 import { CoachClients } from "./pages/coach/CoachClients";
@@ -60,11 +63,32 @@ export default function App() {
             <Route path="/" element={<Overview />} />
             <Route path="/members" element={<Members />} />
             <Route path="/members/import" element={<ImportMembers />} />
+            {/* Owner/front_desk only "by construction" — RequireAuth above
+                already redirects a coach out of this whole route group to
+                /coach, so nothing extra is needed here to keep coaches out.
+                No RequireOwner either: front_desk manages plans too. */}
+            <Route path="/plans" element={<PlansAdmin />} />
             <Route
               path="/revenue"
               element={
                 <RequireOwner>
                   <Revenue />
+                </RequireOwner>
+              }
+            />
+            <Route
+              path="/staff"
+              element={
+                <RequireOwner>
+                  <Staff />
+                </RequireOwner>
+              }
+            />
+            <Route
+              path="/dashboard"
+              element={
+                <RequireOwner>
+                  <OwnerDashboard />
                 </RequireOwner>
               }
             />

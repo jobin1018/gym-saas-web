@@ -8,6 +8,11 @@ export type NewMemberPayload = {
   start_date: string;
   duration_months: number;
   whatsapp_opt_in: boolean;
+  // A negotiated total (e.g. a discount off the plan's list rate). Omit to
+  // let trg_memberships_derive_total_price snapshot plan.amount *
+  // duration_months as usual — see 20260829099000, "pass explicitly to
+  // record a negotiated total".
+  total_price_override?: number;
 };
 
 export type EditMemberPayload = {
@@ -79,8 +84,8 @@ export async function createMember(payload: NewMemberPayload): Promise<void> {
     .single();
   if (memberError) throw memberError;
 
-  // total_price is intentionally NOT sent — trg_memberships_derive_total_price
-  // snapshots plan.amount * duration_months on insert when it's omitted.
+  // total_price omitted (trigger derives plan.amount * duration_months)
+  // unless the front desk negotiated a custom rate — see NewMemberPayload.
   const { error: membershipError } = await supabase.from("memberships").insert({
     organization_id,
     member_id: member.id,
@@ -89,6 +94,9 @@ export async function createMember(payload: NewMemberPayload): Promise<void> {
     start_date: payload.start_date,
     duration_months: payload.duration_months,
     current_period_end: addMonths(payload.start_date, payload.duration_months),
+    ...(payload.total_price_override != null
+      ? { total_price: payload.total_price_override }
+      : {}),
   });
   if (membershipError) throw membershipError;
 }
