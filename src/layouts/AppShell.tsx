@@ -55,7 +55,7 @@ export function AppShell() {
             </div>
             <div className="min-w-0">
               <span className="block font-display text-lg font-semibold leading-tight tracking-tight">
-                Kinetiq
+                GymDean
               </span>
               {organizationName && (
                 <span className="block truncate text-xs text-white/50">
@@ -72,29 +72,8 @@ export function AppShell() {
               />
               Overview
             </NavLink>
-            <NavLink to="/members" className={linkClass}>
-              <Users
-                size={18}
-                className="transition-transform group-hover:scale-110"
-              />
-              Members
-            </NavLink>
-            <NavLink to="/plans" className={linkClass}>
-              <ClipboardList
-                size={18}
-                className="transition-transform group-hover:scale-110"
-              />
-              Plans
-            </NavLink>
             {claims?.role === "owner" && (
               <>
-                <NavLink to="/revenue" className={linkClass}>
-                  <IndianRupee
-                    size={18}
-                    className="transition-transform group-hover:scale-110"
-                  />
-                  Revenue
-                </NavLink>
                 <NavLink to="/dashboard" className={linkClass}>
                   <Gauge
                     size={18}
@@ -102,15 +81,38 @@ export function AppShell() {
                   />
                   Dashboard
                 </NavLink>
-                <NavLink to="/staff" className={linkClass}>
-                  <KeyRound
+                <NavLink to="/revenue" className={linkClass}>
+                  <IndianRupee
                     size={18}
                     className="transition-transform group-hover:scale-110"
                   />
-                  Staff
+                  Revenue
                 </NavLink>
               </>
             )}
+            <NavLink to="/members" className={linkClass}>
+              <Users
+                size={18}
+                className="transition-transform group-hover:scale-110"
+              />
+              Members
+            </NavLink>
+            {claims?.role === "owner" && (
+              <NavLink to="/staff" className={linkClass}>
+                <KeyRound
+                  size={18}
+                  className="transition-transform group-hover:scale-110"
+                />
+                Staff
+              </NavLink>
+            )}
+            <NavLink to="/plans" className={linkClass}>
+              <ClipboardList
+                size={18}
+                className="transition-transform group-hover:scale-110"
+              />
+              Plans
+            </NavLink>
           </nav>
         </div>
         <div className="relative border-t border-white/10 pt-4">

@@ -1,4 +1,4 @@
-# Kinetiq
+# GymDean
 
 A gym management dashboard for front-desk staff — member check-ins, renewals,
 and revenue at a glance. Built with Vite, React, TypeScript, and Tailwind CSS,

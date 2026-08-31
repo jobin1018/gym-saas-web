@@ -46,7 +46,7 @@ export function CoachShell() {
               <PulseMark className="h-4 w-6 text-sage" />
             </div>
             <span className="font-display text-lg font-semibold tracking-tight">
-              Kinetiq Coach
+              GymDean Coach
             </span>
           </div>
           <nav className="space-y-1">
