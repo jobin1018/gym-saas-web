@@ -34,6 +34,14 @@ async function callStaffManage(body: Record<string, unknown>): Promise<any> {
   const resBody = await res.json().catch(() => ({}));
 
   if (!res.ok || !resBody.ok) {
+    // Carries the count from the response, not just a fixed string — this is
+    // the one error where the number is the actionable part of the message.
+    if (resBody.error === "coach_has_active_packages") {
+      const n = resBody.active_package_count ?? 0;
+      throw new StaffManageError(
+        `This coach still has ${n} active PT package${n === 1 ? "" : "s"} — reassign or complete ${n === 1 ? "it" : "them"} before changing their role.`,
+      );
+    }
     const messages: Record<string, string> = {
       not_owner: "Only an owner can manage staff.",
       caller_deactivated: "Your account is no longer active.",
@@ -47,6 +55,7 @@ async function callStaffManage(body: Record<string, unknown>): Promise<any> {
       phone_already_in_org: "A staff member with that phone number already exists.",
       target_not_found: "Couldn't find that staff member.",
       cannot_deactivate_self: "You can't deactivate your own account.",
+      no_editable_fields: "Nothing to save.",
     };
     throw new StaffManageError(messages[resBody.error] ?? "Something went wrong — please try again.");
   }
@@ -63,6 +72,21 @@ export type NewStaffPayload = {
 
 export async function createStaff(payload: NewStaffPayload): Promise<void> {
   await callStaffManage({ action: "create", ...payload });
+}
+
+export type EditStaffPayload = {
+  target_user_id: string;
+  name: string;
+  phone: string;
+  role: "owner" | "front_desk" | "coach";
+  location_id: string | null;
+};
+
+// PIN is deliberately not part of this payload — staff-manage's "edit"
+// action ignores it even if sent; changing a PIN only ever goes through
+// resetStaffPin (see staff-manage's own header comment on why).
+export async function editStaff(payload: EditStaffPayload): Promise<void> {
+  await callStaffManage({ action: "edit", ...payload });
 }
 
 export async function setStaffActive(targetUserId: string, active: boolean): Promise<void> {

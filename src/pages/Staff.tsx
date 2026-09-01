@@ -1,15 +1,16 @@
 import { useEffect, useState } from "react";
-import { KeyRound, X, Plus, UserX, RotateCcw } from "lucide-react";
+import { KeyRound, X, Plus, UserX, RotateCcw, Pencil } from "lucide-react";
 import clsx from "clsx";
 import { supabase } from "../lib/supabase";
 import {
   resetStaffPin,
   createStaff,
+  editStaff,
   setStaffActive,
   PinResetError,
   StaffManageError,
 } from "../lib/staffAdmin";
-import { normalizeLocalPhone } from "../lib/phone";
+import { normalizeLocalPhone, toLocalDigits } from "../lib/phone";
 import { Toast, type ToastState } from "../components/Toast";
 
 type StaffMember = {
@@ -18,6 +19,7 @@ type StaffMember = {
   role: "owner" | "front_desk" | "coach";
   phone: string;
   active: boolean;
+  location_id: string | null;
 };
 
 type Location = { id: string; name: string };
@@ -306,6 +308,179 @@ function AddStaffModal({
   );
 }
 
+function EditStaffModal({
+  staffMember,
+  locations,
+  onClose,
+  onSaved,
+}: {
+  staffMember: StaffMember;
+  locations: Location[];
+  onClose: () => void;
+  onSaved: (message: ToastState) => void;
+}) {
+  const [name, setName] = useState(staffMember.name);
+  const [phone, setPhone] = useState(toLocalDigits(staffMember.phone));
+  const [role, setRole] = useState<StaffMember["role"]>(staffMember.role);
+  const [locationId, setLocationId] = useState(
+    staffMember.location_id ?? locations[0]?.id ?? "",
+  );
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [serverError, setServerError] = useState("");
+
+  const needsLocation = role !== "owner";
+
+  function validate(): boolean {
+    const errs: Record<string, string> = {};
+    if (!name.trim()) errs.name = "Name is required";
+    const phoneResult = normalizeLocalPhone(phone);
+    if (phoneResult.error) errs.phone = phoneResult.error;
+    if (needsLocation && !locationId) errs.location = "Select a location";
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setServerError("");
+    if (!validate()) return;
+
+    setSubmitting(true);
+    try {
+      const normalizedPhone = normalizeLocalPhone(phone).value!;
+      await editStaff({
+        target_user_id: staffMember.id,
+        name: name.trim(),
+        phone: normalizedPhone,
+        role,
+        location_id: needsLocation ? locationId : null,
+      });
+      onSaved({ kind: "success", message: `${name.trim()} updated.` });
+      onClose();
+    } catch (err) {
+      // staffAdmin already turns coach_has_active_packages into a specific,
+      // count-bearing message (see callStaffManage) — this branch just
+      // decides generic vs. that, same pattern as every other modal here.
+      setServerError(err instanceof StaffManageError ? err.message : "Something went wrong.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-4 backdrop-blur-sm">
+      <div className="animate-fade-in-up w-full max-w-md rounded-xl2 bg-white p-6 shadow-2xl">
+        <div className="mb-5 flex items-center justify-between">
+          <h2 className="font-display text-lg font-semibold tracking-tight">
+            Edit staff
+          </h2>
+          <button
+            onClick={onClose}
+            className="focus-ring rounded-lg p-1.5 text-muted transition-colors hover:bg-paper hover:text-ink"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {serverError && <p className="mb-4 text-sm text-ember-dark">{serverError}</p>}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted">Name</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
+            />
+            {errors.name && <p className="mt-1 text-xs text-ember-dark">{errors.name}</p>}
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted">Phone</label>
+            <div
+              className={clsx(
+                "flex items-stretch overflow-hidden rounded-lg border bg-white shadow-sm transition-shadow",
+                errors.phone ? "border-ember" : "border-line",
+                "focus-within:outline-none focus-within:ring-2 focus-within:ring-ember focus-within:ring-offset-2 focus-within:ring-offset-paper",
+              )}
+            >
+              <span className="flex items-center border-r border-line bg-paper px-3 text-sm font-medium text-muted">
+                +91
+              </span>
+              <input
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="98765 43210"
+                className="w-full px-3 py-2.5 text-sm outline-none"
+              />
+            </div>
+            {errors.phone && <p className="mt-1 text-xs text-ember-dark">{errors.phone}</p>}
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted">Role</label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value as StaffMember["role"])}
+              className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
+            >
+              {ROLE_OPTIONS.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+            {staffMember.role === "coach" && role !== "coach" && (
+              <p className="mt-1 text-xs text-amberflag">
+                Changing this coach's role is blocked if they still have
+                active PT packages — reassign or complete those first.
+              </p>
+            )}
+          </div>
+
+          {needsLocation && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted">Location</label>
+              <select
+                value={locationId}
+                onChange={(e) => setLocationId(e.target.value)}
+                className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
+              >
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+              {errors.location && (
+                <p className="mt-1 text-xs text-ember-dark">{errors.location}</p>
+              )}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="focus-ring rounded-lg px-4 py-2 text-sm font-medium text-muted transition-colors hover:bg-paper"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="focus-ring rounded-lg bg-ember px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:bg-ember-dark hover:shadow-glow-ember active:scale-[0.98] disabled:opacity-60"
+            >
+              {submitting ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function DeactivateConfirmModal({
   staffMember,
   onClose,
@@ -373,6 +548,7 @@ export function Staff() {
   const [locations, setLocations] = useState<Location[]>([]);
   const [tab, setTab] = useState<"active" | "inactive">("active");
   const [resetting, setResetting] = useState<StaffMember | null>(null);
+  const [editing, setEditing] = useState<StaffMember | null>(null);
   const [deactivating, setDeactivating] = useState<StaffMember | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -381,7 +557,7 @@ export function Staff() {
   function refresh() {
     supabase
       .from("staff_directory")
-      .select("id, name, role, phone, active")
+      .select("id, name, role, phone, active, location_id")
       .order("role")
       .order("name")
       .then(({ data }) => data && setStaff(data));
@@ -491,6 +667,12 @@ export function Staff() {
               {s.active ? (
                 <>
                   <button
+                    onClick={() => setEditing(s)}
+                    className="focus-ring flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:bg-paper hover:text-ink"
+                  >
+                    <Pencil size={14} /> Edit
+                  </button>
+                  <button
                     onClick={() => setResetting(s)}
                     className="focus-ring flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:bg-paper hover:text-ink"
                   >
@@ -527,6 +709,17 @@ export function Staff() {
           staffMember={resetting}
           onClose={() => setResetting(null)}
           onDone={setToast}
+        />
+      )}
+      {editing && (
+        <EditStaffModal
+          staffMember={editing}
+          locations={locations}
+          onClose={() => setEditing(null)}
+          onSaved={(t) => {
+            refresh();
+            setToast(t);
+          }}
         />
       )}
       {deactivating && (

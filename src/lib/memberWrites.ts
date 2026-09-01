@@ -1,6 +1,41 @@
 import { supabase } from "./supabase";
 import { getCurrentClaims, resolveWriteLocationId } from "./authSession";
 
+const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_URL + "/functions/v1";
+const SEND_WELCOME_MESSAGE_URL = `${FUNCTIONS_URL}/send-welcome-message`;
+
+// Fire-and-forget: a new member's welcome WhatsApp is a nice-to-have side
+// effect, not part of the member-creation contract. createMember() below
+// calls this without awaiting it — the add-member flow completes and shows
+// success the moment the real writes (members + memberships) land,
+// regardless of whether this succeeds, the org has no WhatsApp opt-in, the
+// welcome template isn't approved yet (send-welcome-message no-ops cleanly
+// in that case), or the request fails outright. Logged, never surfaced to
+// the UI — see the task's own framing of this as debugging-only.
+function triggerWelcomeMessage(memberId: string): void {
+  supabase.auth.getSession().then(({ data }) => {
+    const accessToken = data.session?.access_token;
+    if (!accessToken) return;
+    fetch(SEND_WELCOME_MESSAGE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ member_id: memberId }),
+    })
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.ok) {
+          console.log("[welcome message] not sent:", body.error ?? res.status);
+        }
+      })
+      .catch((err) => {
+        console.log("[welcome message] request failed:", err);
+      });
+  });
+}
+
 export type NewMemberPayload = {
   name: string;
   phone: string;
@@ -99,6 +134,8 @@ export async function createMember(payload: NewMemberPayload): Promise<void> {
       : {}),
   });
   if (membershipError) throw membershipError;
+
+  triggerWelcomeMessage(member.id);
 }
 
 export async function updateMemberAndMembership(

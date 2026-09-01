@@ -91,6 +91,17 @@ export function Login() {
       const body = await res.json();
 
       if (!res.ok) {
+        // A phone at 2+ gyms, all suspended, is the only way this shows up
+        // here rather than at the PIN step — staff-lookup-by-phone already
+        // filters matches down to active orgs first (see its own comment)
+        // and only returns this when NONE are left.
+        if (body.error === "org_suspended") {
+          setPhoneError(
+            body.message ??
+              "This gym's subscription is on hold. Please contact support to restore access.",
+          );
+          return;
+        }
         setPhoneError(
           res.status === 404
             ? "We couldn't find that number — check with your gym"
@@ -173,6 +184,23 @@ export function Login() {
       }
 
       if (!res.ok || !body.access_token) {
+        // These two are checked AFTER a correct PIN server-side (see
+        // staff-login), so showing their specific reason here doesn't leak
+        // anything a wrong PIN wouldn't already risk — and "wrong PIN" would
+        // be a confusing, actively misleading message for either case.
+        if (body.error === "org_suspended") {
+          setError(
+            body.message ??
+              "This gym's subscription is on hold. Please contact support to restore access.",
+          );
+          setPin("");
+          return;
+        }
+        if (body.error === "account_deactivated") {
+          setError("Your account has been deactivated — contact your gym owner.");
+          setPin("");
+          return;
+        }
         // Same message whether the phone/pin combo is wrong or unknown —
         // matches the backend's deliberate non-distinguishing 401 contract.
         setError("Incorrect phone or PIN — try again");
