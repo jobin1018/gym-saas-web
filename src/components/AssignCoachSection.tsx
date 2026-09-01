@@ -2,8 +2,26 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { getCurrentClaims } from "../lib/authSession";
 
-type Coach = { id: string; name: string };
+type Coach = {
+  id: string;
+  name: string;
+  active_client_count: number;
+  most_recent_session_date: string | null;
+};
 type Goal = "muscle_gain" | "fat_loss" | "general_fitness";
+
+// "4 clients, active 2d ago" — purely a label for the existing dropdown
+// option; not read anywhere in handleCreatePackage's write.
+function workloadLabel(c: Coach): string {
+  const clients = `${c.active_client_count} client${c.active_client_count === 1 ? "" : "s"}`;
+  if (!c.most_recent_session_date) return `${clients}, no sessions logged yet`;
+  const days = Math.floor(
+    (Date.now() - new Date(c.most_recent_session_date).getTime()) / 86400000,
+  );
+  const recency =
+    days <= 0 ? "active today" : `active ${days}d ago`;
+  return `${clients}, ${recency}`;
+}
 
 const GOAL_OPTIONS: { value: Goal; label: string }[] = [
   { value: "muscle_gain", label: "Muscle gain" },
@@ -35,9 +53,12 @@ export function AssignCoachSection({ memberId }: { memberId: string }) {
   const [success, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
+    // coaches_workload instead of coaches_directory — same active-coach
+    // scoping, plus the two workload columns this dropdown now displays.
+    // Display-only: handleCreatePackage below still sends only coach_id.
     supabase
-      .from("coaches_directory")
-      .select("id, name")
+      .from("coaches_workload")
+      .select("id, name, active_client_count, most_recent_session_date")
       .then(({ data }) => data && setCoaches(data));
   }, []);
 
@@ -110,7 +131,7 @@ export function AssignCoachSection({ memberId }: { memberId: string }) {
             <option value="">Select a coach</option>
             {coaches.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.name}
+                {c.name} — {workloadLabel(c)}
               </option>
             ))}
           </select>

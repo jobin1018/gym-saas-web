@@ -16,6 +16,7 @@ import { ClientDetail } from "./pages/coach/ClientDetail";
 import { CoachShell as RealCoachShell } from "./pages/coachReal/CoachShell";
 import { CoachClients as RealCoachClients } from "./pages/coachReal/CoachClients";
 import { ClientDetail as RealClientDetail } from "./pages/coachReal/ClientDetail";
+import { CoachQuickLog } from "./pages/coachReal/CoachQuickLog";
 
 function RequireAuth({ children }: { children: ReactElement }) {
   const { status, claims } = useAuth();
@@ -103,6 +104,16 @@ export default function App() {
             <Route index element={<CoachClients />} />
             <Route path=":clientId" element={<ClientDetail />} />
           </Route>
+
+          {/* WhatsApp magic-link destination — deliberately OUTSIDE
+              RequireAuth/RequireCoach: there is no session yet when this
+              loads, the token itself is the credential (see
+              validate-magic-link + magicLink.ts). A static "/coach/quick-log"
+              route ranks above the dynamic "/coach/:packageId" below
+              regardless of declaration order (React Router matches by
+              specificity, not source order) — kept first here anyway for
+              readability. */}
+          <Route path="/coach/quick-log" element={<CoachQuickLog />} />
 
           {/* Real coach section — real Supabase queries, RLS-scoped by
               assignment. Package-id-keyed (not member-id-keyed like the
