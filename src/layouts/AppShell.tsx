@@ -8,6 +8,7 @@ import {
   ClipboardList,
   KeyRound,
   Gauge,
+  Receipt,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../contexts/AuthContext";
@@ -96,6 +97,13 @@ export function AppShell() {
                 className="transition-transform group-hover:scale-110"
               />
               Members
+            </NavLink>
+            <NavLink to="/transactions" className={linkClass}>
+              <Receipt
+                size={18}
+                className="transition-transform group-hover:scale-110"
+              />
+              Transactions
             </NavLink>
             {claims?.role === "owner" && (
               <NavLink to="/staff" className={linkClass}>

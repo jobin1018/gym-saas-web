@@ -14,7 +14,7 @@ import { PendingSyncIndicator } from "../../components/PendingSyncIndicator";
 // signed-in session: real sign-out, real offline queue, no "demo" badge.
 export function CoachShell() {
   const navigate = useNavigate();
-  const { name, claims } = useAuth();
+  const { name, claims, organizationName } = useAuth();
 
   useEffect(() => {
     initOfflineQueue();
@@ -42,12 +42,19 @@ export function CoachShell() {
         />
         <div className="relative">
           <div className="mb-10 flex items-center gap-2.5 px-1 text-white">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10">
-              <PulseMark className="h-4 w-6 text-sage" />
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/10">
+              <PulseMark className="h-4 w-6 text-ember" />
             </div>
-            <span className="font-display text-lg font-semibold tracking-tight">
-              GymDean Coach
-            </span>
+            <div className="min-w-0">
+              <span className="block font-display text-lg font-semibold leading-tight tracking-tight">
+                GymDean Coach
+              </span>
+              {organizationName && (
+                <span className="block truncate text-xs text-white/50">
+                  {organizationName}
+                </span>
+              )}
+            </div>
           </div>
           <nav className="space-y-1">
             <NavLink to="/coach" end className={linkClass}>

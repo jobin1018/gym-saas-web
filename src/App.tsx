@@ -7,6 +7,7 @@ import { Members } from "./pages/Members";
 import { ImportMembers } from "./pages/ImportMembers";
 import { Revenue } from "./pages/Revenue";
 import { PlansAdmin } from "./pages/PlansAdmin";
+import { Transactions } from "./pages/Transactions";
 import { Staff } from "./pages/Staff";
 import { OwnerDashboard } from "./pages/OwnerDashboard";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
@@ -69,6 +70,11 @@ export default function App() {
                 /coach, so nothing extra is needed here to keep coaches out.
                 No RequireOwner either: front_desk manages plans too. */}
             <Route path="/plans" element={<PlansAdmin />} />
+            {/* Owner/front_desk only, same "by construction" reasoning as
+                /plans above — front_desk is server-side scoped to their own
+                location by v_payments_ledger's own WHERE clause, not by
+                anything here. */}
+            <Route path="/transactions" element={<Transactions />} />
             <Route
               path="/revenue"
               element={
