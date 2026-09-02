@@ -16,6 +16,7 @@ import {
 } from "../lib/offlineQueue";
 import { normalizeLocalPhone, toLocalDigits } from "../lib/phone";
 import { AssignCoachSection } from "./AssignCoachSection";
+import { MembershipFreezeSection } from "./MembershipFreezeSection";
 
 export type Plan = {
   id: string;
@@ -31,6 +32,9 @@ export type MemberFormInitial = {
   plan_id: string;
   start_date: string;
   status: EditMemberPayload["status"];
+  // Needed for MembershipFreezeSection's "resumes with N days remaining"
+  // display — unused everywhere else in this file.
+  current_period_end: string;
   whatsapp_opt_in: boolean;
 };
 
@@ -437,7 +441,18 @@ export function MemberFormModal({
               )}
             </div>
 
-            {mode === "edit" && (
+            {/* Hidden while frozen: this <select> only ever writes one of
+                STATUS_OPTIONS's 4 values (never "frozen" — see
+                EditMemberPayload's comment), so showing it here would let
+                someone silently unfreeze as a side effect of an unrelated
+                Save. MembershipFreezeSection below is the only real path
+                out of "frozen", via unfreeze_membership.
+                Reads the live `status` state, not initial.status — a freeze
+                done via that section during this same modal session must
+                hide this immediately, not just on next open, or Save would
+                fight it back to whatever this dropdown was showing before
+                the freeze happened. See onStatusChange below. */}
+            {mode === "edit" && status !== "frozen" && (
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted">
                   Status
@@ -498,7 +513,20 @@ export function MemberFormModal({
             isolated component/submit path, not part of handleSubmit above.
             See AssignCoachSection.tsx. */}
         {mode === "edit" && initial && (
-          <AssignCoachSection memberId={initial.member_id} />
+          <>
+            <MembershipFreezeSection
+              membershipId={initial.membership_id}
+              status={initial.status}
+              currentPeriodEnd={initial.current_period_end}
+              // Keeps the plain Status <select> above (and what a Save
+              // submits) in sync with a freeze/unfreeze that happens while
+              // this modal is still open — see the dropdown's own comment.
+              onStatusChange={(newStatus) =>
+                setStatus(newStatus as EditMemberPayload["status"])
+              }
+            />
+            <AssignCoachSection memberId={initial.member_id} />
+          </>
         )}
       </div>
     </div>

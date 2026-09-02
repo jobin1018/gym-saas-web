@@ -57,7 +57,12 @@ export type EditMemberPayload = {
   phone: string;
   plan_id: string;
   start_date: string;
-  status: "active" | "past_due" | "expired" | "cancelled";
+  // "frozen" is a legitimate value to WRITE here (a real no-op re-affirm of
+  // the current status when saving unrelated fields while frozen — see
+  // MembershipFreezeSection's header comment), but the plain Status
+  // <select> that drives this field never lets a user actually SELECT it —
+  // freezing only ever happens through freeze_membership()/that section.
+  status: "active" | "past_due" | "expired" | "cancelled" | "frozen";
   whatsapp_opt_in: boolean;
 };
 

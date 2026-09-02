@@ -13,7 +13,7 @@ import {
 type Membership = {
   id: string;
   plan_id: string;
-  status: "active" | "past_due" | "expired" | "cancelled";
+  status: "active" | "past_due" | "expired" | "cancelled" | "frozen";
   current_period_end: string;
   start_date: string;
 };
@@ -150,6 +150,7 @@ export function Members() {
       plan_id: ms.plan_id,
       start_date: ms.start_date,
       status: ms.status,
+      current_period_end: ms.current_period_end,
       whatsapp_opt_in: editing.whatsapp_opt_in,
     };
   }
