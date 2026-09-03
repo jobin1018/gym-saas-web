@@ -60,11 +60,16 @@ export type ParsedMemberRow = {
   errors: string[];
 };
 
-export function parseMembersCsv(
-  text: string,
+// The format-agnostic half of the pipeline: once ANY source (CSV text,
+// an .xlsx worksheet) has been turned into the same plain string[][] shape
+// (one array per row, header row first), validation/error-reporting is
+// identical regardless of where those rows came from. parseMembersCsv and
+// excel.ts's parseMembersExcel both funnel into this one function rather
+// than each re-implementing the same header lookup + validation rules.
+export function mapRowsToMembers(
+  rows: string[][],
   validPlanNames: Set<string>,
 ): ParsedMemberRow[] {
-  const rows = parseCsv(text);
   if (rows.length === 0) return [];
 
   const header = rows[0].map((h) => h.trim().toLowerCase());
@@ -99,4 +104,11 @@ export function parseMembersCsv(
       errors,
     };
   });
+}
+
+export function parseMembersCsv(
+  text: string,
+  validPlanNames: Set<string>,
+): ParsedMemberRow[] {
+  return mapRowsToMembers(parseCsv(text), validPlanNames);
 }

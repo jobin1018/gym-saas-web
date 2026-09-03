@@ -2,17 +2,36 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { Search, Plus, Upload, ChevronLeft, ChevronRight, Dumbbell } from "lucide-react";
+import clsx from "clsx";
 import { StatusBadge } from "../components/StatusBadge";
 import { Toast, type ToastState } from "../components/Toast";
 import { MemberFormModal, type Plan } from "../components/MemberFormModal";
 
+type MembershipStatus = "active" | "past_due" | "expired" | "cancelled" | "frozen";
+
 type Membership = {
   id: string;
   plan_id: string;
-  status: "active" | "past_due" | "expired" | "cancelled" | "frozen";
+  status: MembershipStatus;
   current_period_end: string;
   start_date: string;
 };
+
+// The task's own enumerated filter list — deliberately not a 5th "Expired"
+// chip; matches memberships.status but is a curated subset, not the full
+// enum. Chips within this group are OR'd (a membership has exactly one
+// status, so requiring two at once would always return nothing) — Has PT
+// is a separate, independently AND'd filter (see refresh()).
+// selectedClass mirrors StatusBadge's own color-per-status mapping (solid
+// instead of the badge's /10 tint, since a pressed chip needs to read as
+// "on" at a glance) — the same color already means the same status
+// everywhere else on this page.
+const STATUS_FILTER_OPTIONS: { value: MembershipStatus; label: string; selectedClass: string }[] = [
+  { value: "active", label: "Active", selectedClass: "bg-sage text-white" },
+  { value: "past_due", label: "Overdue", selectedClass: "bg-amberflag text-white" },
+  { value: "frozen", label: "Frozen", selectedClass: "bg-sky-500 text-white" },
+  { value: "cancelled", label: "Cancelled", selectedClass: "bg-muted text-white" },
+];
 
 type Member = {
   id: string;
@@ -52,22 +71,71 @@ export function Members() {
   const [toast, setToast] = useState<ToastState | null>(null);
   const [checkedInToday, setCheckedInToday] = useState<Set<string>>(new Set());
   const [activePtIds, setActivePtIds] = useState<Set<string>>(new Set());
+  // Chips within this set are OR'd (see STATUS_FILTER_OPTIONS's comment);
+  // Has PT is independent and AND'd on top of whatever's selected here.
+  const [statusFilters, setStatusFilters] = useState<Set<MembershipStatus>>(new Set());
+  const [hasPtFilter, setHasPtFilter] = useState(false);
 
-  function refresh() {
+  function toggleStatusFilter(status: MembershipStatus) {
+    setStatusFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+  }
+
+  async function refresh() {
     // Same established pattern as coachWrites.getSessionHistory():
     // .range(from, to) + { count: 'exact' } + deterministic ordering (name,
     // then id as a tiebreak so paging stays stable when names repeat).
     const from = page * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
+
+    // Has PT can't be expressed as a column on `members` itself — resolve
+    // the qualifying id set from v_members_pt_status first (same view the
+    // PT badge already reads), then constrain the main query to it. Same
+    // RLS scoping as `members` (security_invoker), so this never leaks
+    // ids outside what the caller could already see.
+    let ptFilterIds: string[] | null = null;
+    if (hasPtFilter) {
+      const { data } = await supabase
+        .from("v_members_pt_status")
+        .select("id")
+        .eq("has_active_pt", true);
+      ptFilterIds = (data ?? []).map((r) => r.id);
+      if (ptFilterIds.length === 0) {
+        setMembers([]);
+        setTotal(0);
+        setActivePtIds(new Set());
+        return;
+      }
+    }
+
+    // memberships(...) only becomes memberships!inner(...) when a status
+    // filter is active — !inner turns the embed into a real join, so a
+    // .in() on memberships.status filters which MEMBERS rows come back at
+    // all (not just which embedded rows are nested inside each member, which
+    // is all a plain .eq()/.in() on an embedded LEFT JOIN column would do).
+    // Left exactly as it was — a LEFT JOIN, no filter — when no status chip
+    // is selected, so the unfiltered path is byte-identical to before.
+    const membershipsEmbed =
+      statusFilters.size > 0
+        ? "memberships!inner(id, plan_id, status, current_period_end, start_date)"
+        : "memberships(id, plan_id, status, current_period_end, start_date)";
+
     let q = supabase
       .from("members")
-      .select(
-        "id, name, phone, whatsapp_opt_in, memberships(id, plan_id, status, current_period_end, start_date)",
-        { count: "exact" },
-      );
+      .select(`id, name, phone, whatsapp_opt_in, ${membershipsEmbed}`, { count: "exact" });
     if (debouncedQuery.trim()) {
       const term = debouncedQuery.trim().replace(/[%,]/g, "");
       q = q.or(`name.ilike.%${term}%,phone.ilike.%${term}%`);
+    }
+    if (statusFilters.size > 0) {
+      q = q.in("memberships.status", [...statusFilters]);
+    }
+    if (ptFilterIds) {
+      q = q.in("id", ptFilterIds);
     }
     q.order("name")
       .order("id")
@@ -79,6 +147,11 @@ export function Members() {
 
         // has_active_pt sourced from v_members_pt_status for just this
         // page's ids — one batched query instead of a per-row lookup.
+        // (When the Has PT filter is on, every row on the page is already
+        // known to qualify — ptFilterIds — but re-deriving the badge set
+        // from the same page ids keeps this one code path correct either
+        // way, rather than special-casing "trust the filter" vs "look it
+        // up": the query is cheap and it's one fewer thing that could drift.)
         if (rows.length > 0) {
           supabase
             .from("v_members_pt_status")
@@ -113,16 +186,17 @@ export function Members() {
     return () => clearTimeout(t);
   }, [query]);
 
-  // A new search resets to page 0 — staying on e.g. page 3 of a full list
-  // while a 2-result search renders would just show an empty page.
+  // A new search or filter resets to page 0 — staying on e.g. page 3 of a
+  // full list while a narrower search/filter renders would just show an
+  // empty page.
   useEffect(() => {
     setPage(0);
-  }, [debouncedQuery]);
+  }, [debouncedQuery, statusFilters, hasPtFilter]);
 
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedQuery]);
+  }, [page, debouncedQuery, statusFilters, hasPtFilter]);
 
   useEffect(() => {
     supabase
@@ -174,6 +248,44 @@ export function Members() {
           placeholder="Search by name or phone"
           className="focus-ring w-full rounded-lg border border-line bg-white py-2.5 pl-9 pr-3 text-sm shadow-sm transition-shadow focus:shadow-card"
         />
+      </div>
+
+      {/* Toggle-able chips, not a <select> — these combine (Active + Has PT
+          is a real, useful combination), which a single mutually-exclusive
+          dropdown can't express. Selected = filled in that status's own
+          StatusBadge color, so a chip reads as "this filter is on" the same
+          way the badge already reads as "this is the status" elsewhere on
+          this list. */}
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        {STATUS_FILTER_OPTIONS.map((opt) => {
+          const selected = statusFilters.has(opt.value);
+          return (
+            <button
+              key={opt.value}
+              onClick={() => toggleStatusFilter(opt.value)}
+              className={clsx(
+                "focus-ring rounded-full border px-3 py-1 text-xs font-medium transition-colors duration-150",
+                selected
+                  ? clsx("border-transparent", opt.selectedClass)
+                  : "border-line bg-white text-muted hover:border-ink/20 hover:text-ink",
+              )}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+        <span className="mx-1 h-4 w-px bg-line" aria-hidden="true" />
+        <button
+          onClick={() => setHasPtFilter((v) => !v)}
+          className={clsx(
+            "focus-ring flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors duration-150",
+            hasPtFilter
+              ? "border-transparent bg-amberflag text-white"
+              : "border-line bg-white text-muted hover:border-ink/20 hover:text-ink",
+          )}
+        >
+          <Dumbbell size={11} /> Has PT
+        </button>
       </div>
 
       <div className="mt-5 space-y-2">

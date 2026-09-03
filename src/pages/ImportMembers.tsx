@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Upload, ArrowLeft, RefreshCw } from "lucide-react";
+import { Upload, ArrowLeft, RefreshCw, Download } from "lucide-react";
 import clsx from "clsx";
 import { supabase } from "../lib/supabase";
 import { parseMembersCsv, type ParsedMemberRow } from "../lib/csv";
+import { parseMembersExcel } from "../lib/excel";
 import {
   importMembersBatch,
   isNetworkError,
@@ -17,12 +18,20 @@ import {
 
 type Plan = { id: string; name: string };
 
+const EXCEL_EXTENSION_RE = /\.xlsx?$/i;
+const EXCEL_MIME_RE = /spreadsheet|excel/i;
+
+function isExcelFile(file: File): boolean {
+  return EXCEL_EXTENSION_RE.test(file.name) || EXCEL_MIME_RE.test(file.type);
+}
+
 export function ImportMembers() {
   const navigate = useNavigate();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [rows, setRows] = useState<ParsedMemberRow[]>([]);
   const [importing, setImporting] = useState(false);
   const [summary, setSummary] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const [networkQueuedId, setNetworkQueuedId] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
@@ -35,11 +44,44 @@ export function ImportMembers() {
   }, []);
 
   async function handleFile(file: File) {
-    const text = await file.text();
     const planNames = new Set(plans.map((p) => p.name));
-    setRows(parseMembersCsv(text, planNames));
     setSummary(null);
+    setFileError(null);
     setNetworkQueuedId(null);
+    try {
+      // Both branches land on the exact same ParsedMemberRow[] shape, fed
+      // through the exact same validation (mapRowsToMembers, in csv.ts) —
+      // nothing below this point (preview table, valid/invalid split,
+      // handleImport, the offline queue) knows or cares which format the
+      // file came from.
+      const parsed = isExcelFile(file)
+        ? await parseMembersExcel(await file.arrayBuffer(), planNames)
+        : parseMembersCsv(await file.text(), planNames);
+      setRows(parsed);
+    } catch {
+      // A real new failure mode Excel adds: exceljs genuinely rejects on a
+      // corrupted or non-Excel file wearing an .xlsx extension — the old
+      // plain-text CSV path had nothing equivalent to catch here.
+      setFileError("Couldn't read that file — check it's a valid CSV or Excel file and try again.");
+    }
+  }
+
+  // One realistic, immediately-uploadable example row rather than a
+  // hardcoded plan name — plan names are per-org, so a static "Basic"
+  // wouldn't validate for every gym. Falls back to a placeholder name only
+  // if this org has no active plans yet (e.g. a brand-new org).
+  function downloadSampleTemplate() {
+    const samplePlan = plans[0]?.name ?? "Basic";
+    const csv =
+      "name,phone,plan_name,start_date\n" +
+      `Jane Doe,9876543210,${samplePlan},${new Date().toISOString().slice(0, 10)}\n`;
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "member_import_template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   const validRows = rows.filter((r) => r.errors.length === 0);
@@ -109,12 +151,22 @@ export function ImportMembers() {
         <ArrowLeft size={14} /> Back to members
       </button>
 
-      <h1 className="font-display text-2xl font-semibold tracking-tight">
-        Import members
-      </h1>
-      <p className="mt-1 text-sm text-muted">
-        CSV columns: name, phone, plan_name, start_date (optional).
-      </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-2xl font-semibold tracking-tight">
+            Import members
+          </h1>
+          <p className="mt-1 text-sm text-muted">
+            CSV or Excel columns: name, phone, plan_name, start_date (optional).
+          </p>
+        </div>
+        <button
+          onClick={downloadSampleTemplate}
+          className="focus-ring flex shrink-0 items-center gap-2 rounded-lg border border-line bg-white px-4 py-2 text-sm font-medium transition-all duration-150 hover:-translate-y-0.5 hover:border-ink/20 hover:shadow-card"
+        >
+          <Download size={16} /> Download sample template
+        </button>
+      </div>
 
       {networkQueuedId ? (
         <div className="mt-5 rounded-lg border border-amberflag/30 bg-amberflag/10 p-4 text-sm">
@@ -135,6 +187,12 @@ export function ImportMembers() {
           </button>
         </div>
       ) : null}
+
+      {fileError && (
+        <div className="mt-5 rounded-lg border border-ember/30 bg-ember/10 px-4 py-3 text-sm font-medium text-ember-dark">
+          {fileError}
+        </div>
+      )}
 
       {summary && !networkQueuedId && (
         <div className="mt-5 rounded-lg border border-sage/30 bg-sage/10 px-4 py-3 text-sm font-medium text-sage-dark">
@@ -164,12 +222,12 @@ export function ImportMembers() {
             <Upload size={20} className="text-ember" />
           </span>
           <span className="text-sm font-medium">
-            Click to choose a CSV file
+            Click to choose a CSV or Excel file
           </span>
           <span className="text-xs text-muted">or drag and drop it here</span>
           <input
             type="file"
-            accept=".csv,text/csv"
+            accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
             className="hidden"
             onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
           />
