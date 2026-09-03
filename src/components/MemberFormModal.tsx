@@ -15,9 +15,13 @@ import {
   retryPendingWrites,
 } from "../lib/offlineQueue";
 import { normalizeLocalPhone, toLocalDigits } from "../lib/phone";
-import { AssignCoachSection } from "./AssignCoachSection";
-import { MembershipFreezeSection } from "./MembershipFreezeSection";
 
+// Scoped to just basic info + plan/pricing — PT-package creation
+// (AssignCoachSection, now AddPtPackageModal.tsx) and membership freeze/
+// unfreeze (MembershipFreezeSection) both moved to the Member Detail page,
+// which is now the real hub for a member's full record. This modal is
+// reached from there (and from Members.tsx's "Add member" button), not from
+// clicking a member row anymore.
 export type Plan = {
   id: string;
   name: string;
@@ -32,9 +36,6 @@ export type MemberFormInitial = {
   plan_id: string;
   start_date: string;
   status: EditMemberPayload["status"];
-  // Needed for MembershipFreezeSection's "resumes with N days remaining"
-  // display — unused everywhere else in this file.
-  current_period_end: string;
   whatsapp_opt_in: boolean;
 };
 
@@ -445,14 +446,14 @@ export function MemberFormModal({
                 STATUS_OPTIONS's 4 values (never "frozen" — see
                 EditMemberPayload's comment), so showing it here would let
                 someone silently unfreeze as a side effect of an unrelated
-                Save. MembershipFreezeSection below is the only real path
-                out of "frozen", via unfreeze_membership.
-                Reads the live `status` state, not initial.status — a freeze
-                done via that section during this same modal session must
-                hide this immediately, not just on next open, or Save would
-                fight it back to whatever this dropdown was showing before
-                the freeze happened. See onStatusChange below. */}
-            {mode === "edit" && status !== "frozen" && (
+                Save. The only real path out of "frozen" is MemberDetail's
+                own Freeze/Unfreeze action (MembershipFreezeSection), not
+                this modal — this guard just has to survive THIS modal ever
+                being opened on an already-frozen membership (reachable from
+                MemberDetail's "Edit" button), so the mount-time initial
+                value is enough; there is no in-session freeze path in this
+                file anymore to also track live. */}
+            {mode === "edit" && initial?.status !== "frozen" && (
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted">
                   Status
@@ -508,26 +509,6 @@ export function MemberFormModal({
             </button>
           </div>
         </form>
-
-        {/* Deliberately outside the <form> above — real write, but its own
-            isolated component/submit path, not part of handleSubmit above.
-            See AssignCoachSection.tsx. */}
-        {mode === "edit" && initial && (
-          <>
-            <MembershipFreezeSection
-              membershipId={initial.membership_id}
-              status={initial.status}
-              currentPeriodEnd={initial.current_period_end}
-              // Keeps the plain Status <select> above (and what a Save
-              // submits) in sync with a freeze/unfreeze that happens while
-              // this modal is still open — see the dropdown's own comment.
-              onStatusChange={(newStatus) =>
-                setStatus(newStatus as EditMemberPayload["status"])
-              }
-            />
-            <AssignCoachSection memberId={initial.member_id} />
-          </>
-        )}
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import { AppShell } from "./layouts/AppShell";
 import { Login } from "./pages/Login";
 import { Overview } from "./pages/Overview";
 import { Members } from "./pages/Members";
+import { MemberDetail } from "./pages/MemberDetail";
 import { ImportMembers } from "./pages/ImportMembers";
 import { Revenue } from "./pages/Revenue";
 import { PlansAdmin } from "./pages/PlansAdmin";
@@ -65,6 +66,12 @@ export default function App() {
             <Route path="/" element={<Overview />} />
             <Route path="/members" element={<Members />} />
             <Route path="/members/import" element={<ImportMembers />} />
+            {/* Static "/members/import" above ranks over this dynamic
+                segment regardless of declaration order (React Router
+                matches by specificity, not source order) — same reasoning
+                already established for "/coach/quick-log" vs
+                "/coach/:packageId". */}
+            <Route path="/members/:id" element={<MemberDetail />} />
             {/* Owner/front_desk only "by construction" — RequireAuth above
                 already redirects a coach out of this whole route group to
                 /coach, so nothing extra is needed here to keep coaches out.

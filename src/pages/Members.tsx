@@ -1,14 +1,10 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { Search, Plus, Upload, ChevronLeft, ChevronRight, Dumbbell } from "lucide-react";
 import { StatusBadge } from "../components/StatusBadge";
 import { Toast, type ToastState } from "../components/Toast";
-import {
-  MemberFormModal,
-  type MemberFormInitial,
-  type Plan,
-} from "../components/MemberFormModal";
+import { MemberFormModal, type Plan } from "../components/MemberFormModal";
 
 type Membership = {
   id: string;
@@ -40,6 +36,7 @@ function currentMembership(m: Member): Membership | undefined {
 }
 
 export function Members() {
+  const navigate = useNavigate();
   const [members, setMembers] = useState<Member[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -48,8 +45,10 @@ export function Members() {
   // Debounced so server-side search doesn't fire a query per keystroke —
   // the old client-side .filter() had no such cost, but a real query does.
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [modal, setModal] = useState<"add" | "edit" | null>(null);
-  const [editing, setEditing] = useState<Member | null>(null);
+  // "add" only now — clicking a row navigates to /members/:id instead of
+  // opening an edit modal directly (Member Detail is the hub; its own Edit
+  // button is what opens MemberFormModal in edit mode now).
+  const [modal, setModal] = useState<"add" | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [checkedInToday, setCheckedInToday] = useState<Set<string>>(new Set());
   const [activePtIds, setActivePtIds] = useState<Set<string>>(new Set());
@@ -133,34 +132,9 @@ export function Members() {
       .then(({ data }) => data && setPlans(data));
   }, []);
 
-  function openEdit(member: Member) {
-    setEditing(member);
-    setModal("edit");
-  }
-
-  function editInitial(): MemberFormInitial | undefined {
-    if (!editing) return undefined;
-    const ms = currentMembership(editing);
-    if (!ms) return undefined;
-    return {
-      member_id: editing.id,
-      membership_id: ms.id,
-      name: editing.name,
-      phone: editing.phone,
-      plan_id: ms.plan_id,
-      start_date: ms.start_date,
-      status: ms.status,
-      current_period_end: ms.current_period_end,
-      whatsapp_opt_in: editing.whatsapp_opt_in,
-    };
-  }
-
-  function handleSaved(kind: "add" | "edit") {
+  function handleSaved() {
     refresh();
-    setToast({
-      kind: "success",
-      message: kind === "add" ? "Member added." : "Member updated.",
-    });
+    setToast({ kind: "success", message: "Member added." });
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -210,7 +184,7 @@ export function Members() {
           return (
             <button
               key={m.id}
-              onClick={() => openEdit(m)}
+              onClick={() => navigate(`/members/${m.id}`)}
               className="focus-ring flex w-full items-center justify-between rounded-xl2 border border-line/70 bg-white px-5 py-3.5 text-left shadow-card transition-all duration-150 hover:-translate-y-0.5 hover:border-line hover:shadow-card-hover"
             >
               <div className="flex items-center gap-3">
@@ -284,16 +258,7 @@ export function Members() {
           mode="add"
           plans={plans}
           onClose={() => setModal(null)}
-          onSaved={() => handleSaved("add")}
-        />
-      )}
-      {modal === "edit" && editInitial() && (
-        <MemberFormModal
-          mode="edit"
-          initial={editInitial()}
-          plans={plans}
-          onClose={() => setModal(null)}
-          onSaved={() => handleSaved("edit")}
+          onSaved={handleSaved}
         />
       )}
     </div>
