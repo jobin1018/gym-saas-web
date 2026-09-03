@@ -33,6 +33,17 @@ const STATUS_FILTER_OPTIONS: { value: MembershipStatus; label: string; selectedC
   { value: "cancelled", label: "Cancelled", selectedClass: "bg-muted text-white" },
 ];
 
+type SortOption = "renewal" | "name" | "recent";
+
+// "Renewal date" is the default — same "surface urgency first" principle as
+// Overview's renewals widget and the OVERDUE command, so opening Members
+// with no filters/search still leads with whoever needs attention soonest.
+const SORT_OPTIONS: { value: SortOption; label: string }[] = [
+  { value: "renewal", label: "Renewal date" },
+  { value: "name", label: "Name (A–Z)" },
+  { value: "recent", label: "Recently added" },
+];
+
 type Member = {
   id: string;
   name: string;
@@ -75,6 +86,7 @@ export function Members() {
   // Has PT is independent and AND'd on top of whatever's selected here.
   const [statusFilters, setStatusFilters] = useState<Set<MembershipStatus>>(new Set());
   const [hasPtFilter, setHasPtFilter] = useState(false);
+  const [sort, setSort] = useState<SortOption>("renewal");
 
   function toggleStatusFilter(status: MembershipStatus) {
     setStatusFilters((prev) => {
@@ -85,10 +97,33 @@ export function Members() {
     });
   }
 
+  // has_active_pt sourced from v_members_pt_status for just this page's ids
+  // — one batched query instead of a per-row lookup. (When the Has PT
+  // filter is on, every row on the page is already known to qualify —
+  // ptFilterIds — but re-deriving the badge set from the same page ids
+  // keeps this shared between both sort paths correct either way, rather
+  // than special-casing "trust the filter" vs "look it up": the query is
+  // cheap and it's one fewer thing that could drift.)
+  function loadPtBadges(rows: Member[]) {
+    if (rows.length === 0) {
+      setActivePtIds(new Set());
+      return;
+    }
+    supabase
+      .from("v_members_pt_status")
+      .select("id, has_active_pt")
+      .in("id", rows.map((r) => r.id))
+      .then(({ data: ptData }) => {
+        setActivePtIds(
+          new Set((ptData ?? []).filter((p) => p.has_active_pt).map((p) => p.id)),
+        );
+      });
+  }
+
   async function refresh() {
     // Same established pattern as coachWrites.getSessionHistory():
-    // .range(from, to) + { count: 'exact' } + deterministic ordering (name,
-    // then id as a tiebreak so paging stays stable when names repeat).
+    // .range(from, to) + { count: 'exact' } + deterministic ordering, with
+    // id as a tiebreak so paging stays stable when the sort column repeats.
     const from = page * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
@@ -112,60 +147,112 @@ export function Members() {
       }
     }
 
-    // memberships(...) only becomes memberships!inner(...) when a status
-    // filter is active — !inner turns the embed into a real join, so a
-    // .in() on memberships.status filters which MEMBERS rows come back at
-    // all (not just which embedded rows are nested inside each member, which
-    // is all a plain .eq()/.in() on an embedded LEFT JOIN column would do).
-    // Left exactly as it was — a LEFT JOIN, no filter — when no status chip
-    // is selected, so the unfiltered path is byte-identical to before.
-    const membershipsEmbed =
-      statusFilters.size > 0
-        ? "memberships!inner(id, plan_id, status, current_period_end, start_date)"
-        : "memberships(id, plan_id, status, current_period_end, start_date)";
+    if (sort === "renewal") {
+      // current_period_end lives on memberships, one-to-many from members'
+      // side — PostgREST refuses to order the members query by an embedded
+      // to-many column ("a related order... is not possible"), so ordering
+      // by renewal date isn't reachable from the members-as-base query
+      // below at all. Querying FROM memberships instead — the same base-
+      // table flip Overview.tsx's renewals widget already uses, for the
+      // same reason — makes current_period_end a native, orderable column.
+      // Only this sort needs the flip; Name/Recently-added sort on members'
+      // own columns, so they keep the untouched members-as-base path below.
+      let q = supabase.from("memberships").select(
+        "id, plan_id, status, current_period_end, start_date, member_id, members!inner(id, name, phone, whatsapp_opt_in)",
+        { count: "exact" },
+      );
+      if (debouncedQuery.trim()) {
+        const term = debouncedQuery.trim().replace(/[%,]/g, "");
+        q = q.or(`name.ilike.%${term}%,phone.ilike.%${term}%`, {
+          referencedTable: "members",
+        });
+      }
+      if (statusFilters.size > 0) {
+        q = q.in("status", [...statusFilters]);
+      }
+      if (ptFilterIds) {
+        q = q.in("member_id", ptFilterIds);
+      }
+      q.order("current_period_end", { ascending: true })
+        .order("id")
+        .range(from, to)
+        .then(({ data, count }) => {
+          type RenewalRow = {
+            id: string;
+            plan_id: string;
+            status: MembershipStatus;
+            current_period_end: string;
+            start_date: string;
+            members: { id: string; name: string; phone: string; whatsapp_opt_in: boolean };
+          };
+          const msRows = (data as unknown as RenewalRow[]) ?? [];
+          // Each result row IS a membership with its member embedded — the
+          // inverse of the members-as-base shape below. Reassembled into
+          // the same Member[] shape (one membership per row) so rendering
+          // and currentMembership() don't need to know which path produced
+          // it. Carries the same accepted multi-membership-row edge case
+          // as the status filters already do: a member with more than one
+          // qualifying membership would appear as more than one row here.
+          const rows: Member[] = msRows.map((r) => ({
+            id: r.members.id,
+            name: r.members.name,
+            phone: r.members.phone,
+            whatsapp_opt_in: r.members.whatsapp_opt_in,
+            memberships: [
+              {
+                id: r.id,
+                plan_id: r.plan_id,
+                status: r.status,
+                current_period_end: r.current_period_end,
+                start_date: r.start_date,
+              },
+            ],
+          }));
+          setMembers(rows);
+          setTotal(count ?? rows.length);
+          loadPtBadges(rows);
+        });
+    } else {
+      // memberships(...) only becomes memberships!inner(...) when a status
+      // filter is active — !inner turns the embed into a real join, so a
+      // .in() on memberships.status filters which MEMBERS rows come back at
+      // all (not just which embedded rows are nested inside each member,
+      // which is all a plain .eq()/.in() on an embedded LEFT JOIN column
+      // would do). Left exactly as it was — a LEFT JOIN, no filter — when
+      // no status chip is selected, so the unfiltered path is
+      // byte-identical to before.
+      const membershipsEmbed =
+        statusFilters.size > 0
+          ? "memberships!inner(id, plan_id, status, current_period_end, start_date)"
+          : "memberships(id, plan_id, status, current_period_end, start_date)";
 
-    let q = supabase
-      .from("members")
-      .select(`id, name, phone, whatsapp_opt_in, ${membershipsEmbed}`, { count: "exact" });
-    if (debouncedQuery.trim()) {
-      const term = debouncedQuery.trim().replace(/[%,]/g, "");
-      q = q.or(`name.ilike.%${term}%,phone.ilike.%${term}%`);
+      let q = supabase
+        .from("members")
+        .select(`id, name, phone, whatsapp_opt_in, created_at, ${membershipsEmbed}`, {
+          count: "exact",
+        });
+      if (debouncedQuery.trim()) {
+        const term = debouncedQuery.trim().replace(/[%,]/g, "");
+        q = q.or(`name.ilike.%${term}%,phone.ilike.%${term}%`);
+      }
+      if (statusFilters.size > 0) {
+        q = q.in("memberships.status", [...statusFilters]);
+      }
+      if (ptFilterIds) {
+        q = q.in("id", ptFilterIds);
+      }
+      const ordered =
+        sort === "name" ? q.order("name") : q.order("created_at", { ascending: false });
+      ordered
+        .order("id")
+        .range(from, to)
+        .then(({ data, count }) => {
+          const rows = (data as unknown as Member[]) ?? [];
+          setMembers(rows);
+          setTotal(count ?? rows.length);
+          loadPtBadges(rows);
+        });
     }
-    if (statusFilters.size > 0) {
-      q = q.in("memberships.status", [...statusFilters]);
-    }
-    if (ptFilterIds) {
-      q = q.in("id", ptFilterIds);
-    }
-    q.order("name")
-      .order("id")
-      .range(from, to)
-      .then(({ data, count }) => {
-        const rows = (data as unknown as Member[]) ?? [];
-        setMembers(rows);
-        setTotal(count ?? rows.length);
-
-        // has_active_pt sourced from v_members_pt_status for just this
-        // page's ids — one batched query instead of a per-row lookup.
-        // (When the Has PT filter is on, every row on the page is already
-        // known to qualify — ptFilterIds — but re-deriving the badge set
-        // from the same page ids keeps this one code path correct either
-        // way, rather than special-casing "trust the filter" vs "look it
-        // up": the query is cheap and it's one fewer thing that could drift.)
-        if (rows.length > 0) {
-          supabase
-            .from("v_members_pt_status")
-            .select("id, has_active_pt")
-            .in("id", rows.map((r) => r.id))
-            .then(({ data: ptData }) => {
-              setActivePtIds(
-                new Set((ptData ?? []).filter((p) => p.has_active_pt).map((p) => p.id)),
-              );
-            });
-        } else {
-          setActivePtIds(new Set());
-        }
-      });
 
     // The schema only records a check-in timestamp, no check-out — so this
     // is "checked in at some point today", not "currently in the building".
@@ -186,17 +273,17 @@ export function Members() {
     return () => clearTimeout(t);
   }, [query]);
 
-  // A new search or filter resets to page 0 — staying on e.g. page 3 of a
-  // full list while a narrower search/filter renders would just show an
-  // empty page.
+  // A new search, filter, or sort resets to page 0 — staying on e.g. page 3
+  // of a full list while a narrower/differently-ordered result renders
+  // would just show an empty or confusing page.
   useEffect(() => {
     setPage(0);
-  }, [debouncedQuery, statusFilters, hasPtFilter]);
+  }, [debouncedQuery, statusFilters, hasPtFilter, sort]);
 
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedQuery, statusFilters, hasPtFilter]);
+  }, [page, debouncedQuery, statusFilters, hasPtFilter, sort]);
 
   useEffect(() => {
     supabase
@@ -286,6 +373,27 @@ export function Members() {
         >
           <Dumbbell size={11} /> Has PT
         </button>
+
+        {/* A <select>, not chips — unlike the filters above, these three
+            options are mutually exclusive (exactly one applies at a time),
+            which is exactly what a dropdown communicates and chips don't. */}
+        <div className="ml-auto flex items-center gap-1.5">
+          <label htmlFor="member-sort" className="text-xs text-muted">
+            Sort
+          </label>
+          <select
+            id="member-sort"
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortOption)}
+            className="focus-ring rounded-lg border border-line bg-white px-2.5 py-1 text-xs font-medium text-ink shadow-sm"
+          >
+            {SORT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="mt-5 space-y-2">
