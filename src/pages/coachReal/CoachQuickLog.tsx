@@ -41,18 +41,18 @@ export function CoachQuickLog() {
 
   useEffect(() => {
     (async () => {
-      // A page refresh after a successful redemption re-sends the same
-      // single-use token in the URL — the server would correctly reject it
-      // as already-used. If this browser already has a live session (from
-      // the redemption that already happened), skip straight past that
-      // instead of showing a false "link expired" on a simple refresh.
-      const { data: existing } = await supabase.auth.getSession();
-      if (existing.session) {
-        setStep("ready");
-        loadClients();
-        return;
-      }
-
+      // Deliberately does NOT check for a pre-existing session and skip
+      // straight to "ready" on one (the previous "page-refresh guard" this
+      // page used to have). That shortcut trusted ANY session already
+      // sitting in this browser as proof THIS token had already been
+      // redeemed — including a stale PIN login left open, or a DIFFERENT
+      // magic link redeemed earlier in the same browser. Confirmed bug: the
+      // same link kept working on a second visit, and a second unrelated
+      // link would have silently ridden the first one's session too. Every
+      // visit now redeems the token in the URL for real, every time — a
+      // bare refresh after a successful redemption now correctly reports
+      // "already used" rather than quietly reusing the old session, which
+      // is the honest behavior for a genuinely single-use token.
       const token = searchParams.get("token");
       if (!token) {
         setErrorMessage(

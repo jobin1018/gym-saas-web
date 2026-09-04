@@ -57,16 +57,15 @@ export function AddPtPackageLinkPage() {
 
   useEffect(() => {
     (async () => {
-      // Same page-refresh guard as CoachQuickLog/AddMemberLinkPage — a
-      // reload re-sends the same single-use token, which the server would
-      // correctly reject as already-used.
-      const { data: existing } = await supabase.auth.getSession();
-      if (existing.session) {
-        setStep("ready");
-        loadCoaches().then(setCoaches);
-        return;
-      }
-
+      // Deliberately does NOT check for a pre-existing session and skip
+      // straight to "ready" on one — see AddMemberLinkPage's own comment on
+      // this exact fix. That shortcut trusted ANY session already in this
+      // browser (a stale PIN login, or a different magic link redeemed
+      // earlier here) as proof THIS token was already used, which let a
+      // still-valid link keep re-validating successfully forever and let a
+      // second, unrelated link silently ride the first one's session
+      // instead of being checked on its own terms. Every visit now redeems
+      // the token in the URL for real, every time.
       const token = searchParams.get("token");
       if (!token) {
         setErrorMessage(
