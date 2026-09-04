@@ -1,33 +1,14 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
-import { supabase } from "../lib/supabase";
-import { getCurrentClaims } from "../lib/authSession";
-
-type Coach = {
-  id: string;
-  name: string;
-  active_client_count: number;
-  most_recent_session_date: string | null;
-};
-type Goal = "muscle_gain" | "fat_loss" | "general_fitness";
-
-// "4 clients, active 2d ago" — purely a label for the dropdown option; not
-// read anywhere in handleCreatePackage's write.
-function workloadLabel(c: Coach): string {
-  const clients = `${c.active_client_count} client${c.active_client_count === 1 ? "" : "s"}`;
-  if (!c.most_recent_session_date) return `${clients}, no sessions logged yet`;
-  const days = Math.floor(
-    (Date.now() - new Date(c.most_recent_session_date).getTime()) / 86400000,
-  );
-  const recency = days <= 0 ? "active today" : `active ${days}d ago`;
-  return `${clients}, ${recency}`;
-}
-
-const GOAL_OPTIONS: { value: Goal; label: string }[] = [
-  { value: "muscle_gain", label: "Muscle gain" },
-  { value: "fat_loss", label: "Fat loss" },
-  { value: "general_fitness", label: "General fitness" },
-];
+import {
+  GOAL_OPTIONS,
+  createPtPackage,
+  loadCoaches,
+  validatePtPackageInput,
+  workloadLabel,
+  type Coach,
+  type Goal,
+} from "../lib/ptPackageWrites";
 
 // Standalone modal — was AssignCoachSection.tsx, embedded inside
 // MemberFormModal's edit view. Now reached from the Member Detail page's
@@ -35,7 +16,9 @@ const GOAL_OPTIONS: { value: Goal; label: string }[] = [
 // basic info + plan/pricing now (see its own header comment), and PT-package
 // creation lives here, its own real write/error handling, same as before —
 // just presented as a modal (its own X/backdrop) rather than an inline
-// section. The actual insert logic is unchanged from AssignCoachSection.
+// section. The validation + insert itself now lives in ptPackageWrites.ts,
+// shared with the /pt/add magic-link page — same fields, same rules, this
+// is just one of two entry points to them now.
 export function AddPtPackageModal({
   memberId,
   onClose,
@@ -63,51 +46,33 @@ export function AddPtPackageModal({
   const [success, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase
-      .from("coaches_workload")
-      .select("id, name, active_client_count, most_recent_session_date")
-      .then(({ data }) => data && setCoaches(data));
+    loadCoaches().then(setCoaches);
   }, []);
 
   async function handleCreatePackage() {
     setError("");
-    if (!coachId) {
-      setError("Select a coach");
-      return;
-    }
-    const months = Number(durationMonths);
-    const perMonth = Number(sessionsPerMonth);
-    if (!Number.isInteger(months) || months <= 0) {
-      setError("Duration must be a whole number of months greater than 0");
-      return;
-    }
-    if (!Number.isInteger(perMonth) || perMonth <= 0) {
-      setError("Sessions per month must be a whole number greater than 0");
-      return;
-    }
-    const parsedPrice = Number(price);
-    if (!price.trim() || Number.isNaN(parsedPrice) || parsedPrice < 0) {
-      setError("Enter a valid price");
+    const validated = validatePtPackageInput({
+      coachId,
+      durationMonths,
+      sessionsPerMonth,
+      price,
+    });
+    if (validated.error !== null) {
+      setError(validated.error);
       return;
     }
 
     setSubmitting(true);
     try {
-      const claims = await getCurrentClaims();
-      // sessions_purchased is intentionally NOT sent — the DB trigger derives
-      // it as duration_months * sessions_per_month. Send it explicitly only to
-      // override (e.g. a negotiated discount session).
-      const { error: insertError } = await supabase.from("pt_packages").insert({
-        organization_id: claims.organizationId,
+      await createPtPackage({
         member_id: memberId,
         coach_id: coachId,
         goal,
-        duration_months: months,
-        sessions_per_month: perMonth,
-        price: parsedPrice,
+        duration_months: validated.parsed.months,
+        sessions_per_month: validated.parsed.perMonth,
+        price: validated.parsed.price,
         start_date: startDate,
       });
-      if (insertError) throw insertError;
 
       const coachName = coaches.find((c) => c.id === coachId)?.name ?? "coach";
       setSuccess(`Package created with ${coachName}.`);

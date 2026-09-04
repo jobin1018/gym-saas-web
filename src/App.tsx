@@ -19,6 +19,8 @@ import { CoachShell as RealCoachShell } from "./pages/coachReal/CoachShell";
 import { CoachClients as RealCoachClients } from "./pages/coachReal/CoachClients";
 import { ClientDetail as RealClientDetail } from "./pages/coachReal/ClientDetail";
 import { CoachQuickLog } from "./pages/coachReal/CoachQuickLog";
+import { AddMemberLinkPage } from "./pages/magicLink/AddMember";
+import { AddPtPackageLinkPage } from "./pages/magicLink/AddPtPackage";
 
 function RequireAuth({ children }: { children: ReactElement }) {
   const { status, claims } = useAuth();
@@ -127,6 +129,17 @@ export default function App() {
               specificity, not source order) — kept first here anyway for
               readability. */}
           <Route path="/coach/quick-log" element={<CoachQuickLog />} />
+
+          {/* WhatsApp "ADD MEMBER" / "ADD PT" magic-link destinations —
+              same reasoning as /coach/quick-log above: deliberately OUTSIDE
+              RequireAuth, since there is no session yet when either loads.
+              Owner/front_desk only (validate-magic-link's PURPOSE_ROLES
+              enforces this server-side), but that's not a route guard
+              either — same as /coach/quick-log, the token IS the
+              credential. Not linked from anywhere in the app's own
+              nav/sidebar — reachable only via a magic link. */}
+          <Route path="/members/add" element={<AddMemberLinkPage />} />
+          <Route path="/pt/add" element={<AddPtPackageLinkPage />} />
 
           {/* Real coach section — real Supabase queries, RLS-scoped by
               assignment. Package-id-keyed (not member-id-keyed like the
