@@ -6,7 +6,13 @@ import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../contexts/AuthContext";
 import { redeemMagicLink, MagicLinkError } from "../../lib/magicLink";
 import { MagicLinkShell, type MagicLinkStep } from "../../components/MagicLinkShell";
-import { createMember, isNetworkError, type NewMemberPayload } from "../../lib/memberWrites";
+import {
+  addMonths,
+  createMember,
+  isNetworkError,
+  type NewMemberPayload,
+} from "../../lib/memberWrites";
+import { PLAN_AMOUNT_MIN, PLAN_AMOUNT_MAX } from "../../lib/planWrites";
 import { normalizeLocalPhone } from "../../lib/phone";
 import {
   getPendingWrites,
@@ -46,6 +52,10 @@ export function AddMemberLinkPage() {
   const [phone, setPhone] = useState("");
   const [planId, setPlanId] = useState("");
   const [durationMonths, setDurationMonths] = useState("1");
+  // Same custom-rate override as MemberFormModal: plan_id stays the selected
+  // plan, only total_price is overridden (rate * duration).
+  const [customPriceEnabled, setCustomPriceEnabled] = useState(false);
+  const [customRate, setCustomRate] = useState("");
   const [startDate, setStartDate] = useState(
     new Date().toISOString().slice(0, 10),
   );
@@ -125,19 +135,36 @@ export function AddMemberLinkPage() {
       });
   }
 
+  const selectedPlan = plans.find((p) => p.id === planId);
+  const parsedDuration = Number(durationMonths);
+  const durationValid =
+    Number.isInteger(parsedDuration) && parsedDuration >= 1 && parsedDuration <= 36;
+  const parsedCustomRate = Number(customRate);
+  const customRateValid =
+    !customPriceEnabled ||
+    (customRate.trim() !== "" &&
+      !Number.isNaN(parsedCustomRate) &&
+      parsedCustomRate >= PLAN_AMOUNT_MIN &&
+      parsedCustomRate <= PLAN_AMOUNT_MAX);
+  const effectiveRate = customPriceEnabled ? parsedCustomRate : selectedPlan?.amount;
+  const renewalPreview =
+    startDate && durationValid ? addMonths(startDate, parsedDuration) : null;
+  const totalPreview =
+    effectiveRate != null && !Number.isNaN(effectiveRate) && durationValid
+      ? effectiveRate * parsedDuration
+      : null;
+
   function validate(): boolean {
     const errors: Record<string, string> = {};
     if (!name.trim()) errors.name = "Name is required";
     const phoneResult = normalizeLocalPhone(phone);
     if (phoneResult.error) errors.phone = phoneResult.error;
     if (!planId) errors.plan = "Select a plan";
-    const parsedDuration = Number(durationMonths);
-    if (
-      !Number.isInteger(parsedDuration) ||
-      parsedDuration < 1 ||
-      parsedDuration > 36
-    ) {
+    if (!durationValid) {
       errors.duration = "Enter a whole number of months between 1 and 36";
+    }
+    if (!customRateValid) {
+      errors.customRate = `Enter an amount between ₹${PLAN_AMOUNT_MIN} and ₹${PLAN_AMOUNT_MAX.toLocaleString("en-IN")}`;
     }
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
@@ -162,6 +189,9 @@ export function AddMemberLinkPage() {
       start_date: startDate,
       duration_months: Number(durationMonths),
       whatsapp_opt_in: true,
+      ...(customPriceEnabled
+        ? { total_price_override: parsedCustomRate * parsedDuration }
+        : {}),
     };
 
     try {
@@ -312,6 +342,41 @@ export function AddMemberLinkPage() {
               )}
             </div>
 
+            <label className="flex min-h-12 items-center gap-3 rounded-lg border border-line/70 px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                checked={customPriceEnabled}
+                onChange={(e) => {
+                  setCustomPriceEnabled(e.target.checked);
+                  // Pre-fill from the selected plan's rate, as the main modal does.
+                  if (e.target.checked && !customRate && selectedPlan) {
+                    setCustomRate(String(selectedPlan.amount));
+                  }
+                }}
+                className="focus-ring h-6 w-6 shrink-0 rounded border-line text-ember accent-ember"
+              />
+              Use a custom rate (discount / negotiated price)
+            </label>
+
+            {customPriceEnabled && (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted">
+                  Custom monthly rate (₹)
+                </label>
+                <input
+                  inputMode="decimal"
+                  value={customRate}
+                  onChange={(e) => setCustomRate(e.target.value)}
+                  className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-3 text-base shadow-sm transition-shadow"
+                />
+                {fieldErrors.customRate && (
+                  <p className="mt-1 text-xs text-ember-dark">
+                    {fieldErrors.customRate}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted">
@@ -341,6 +406,29 @@ export function AddMemberLinkPage() {
                 />
               </div>
             </div>
+
+            {renewalPreview && (
+              <p className="text-xs text-muted">
+                Renews on{" "}
+                <span className="font-medium text-ink">
+                  {new Date(renewalPreview).toLocaleDateString("en-IN", {
+                    day: "numeric",
+                    month: "long",
+                    year: "numeric",
+                  })}
+                </span>{" "}
+                ({parsedDuration} {parsedDuration === 1 ? "month" : "months"})
+                {totalPreview != null && (
+                  <>
+                    {" "}
+                    · Total{" "}
+                    <span className="font-medium text-ink">
+                      ₹{totalPreview.toLocaleString("en-IN")}
+                    </span>
+                  </>
+                )}
+              </p>
+            )}
 
             {serverError && (
               <p className="text-sm text-ember-dark">{serverError}</p>
