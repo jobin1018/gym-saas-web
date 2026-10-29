@@ -1,10 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Search, ChevronLeft, ChevronRight, Dumbbell, Wallet } from "lucide-react";
 import clsx from "clsx";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../contexts/AuthContext";
+import { VoidPaymentModal } from "../components/VoidPaymentModal";
+import { methodLabel } from "../lib/paymentRules";
 
-type PaymentStatus = "success" | "failed" | "pending" | "manual";
+type PaymentStatus =
+  | "success"
+  | "failed"
+  | "pending"
+  | "manual"
+  | "void"
+  | "refund_due";
 type PaymentType = "membership" | "personal_training";
 
 type LedgerRow = {
@@ -17,13 +25,28 @@ type LedgerRow = {
   provider: "razorpay" | "manual";
   provider_payment_id: string | null;
   payment_type: PaymentType;
+  payment_method: string | null;
+  reference: string | null;
+  recorded_by_name: string | null;
+  received_at: string | null;
+  is_void: boolean;
+  is_collected: boolean;
+  // Owners only (the view returns NULL for front desk).
+  void_reason: string | null;
 };
 
 type Location = { id: string; name: string };
 
 const PAGE_SIZE = 20;
 
-const STATUS_OPTIONS: PaymentStatus[] = ["success", "failed", "pending", "manual"];
+const STATUS_OPTIONS: PaymentStatus[] = [
+  "success",
+  "failed",
+  "pending",
+  "manual",
+  "void",
+  "refund_due",
+];
 const TYPE_OPTIONS: { value: PaymentType; label: string }[] = [
   { value: "membership", label: "Membership" },
   { value: "personal_training", label: "PT" },
@@ -42,18 +65,27 @@ const STATUS_STYLES: Record<PaymentStatus, string> = {
   // just labelled for what it actually says in the data (status='manual'
   // literally, not a synthesized "success").
   manual: "bg-sage/10 text-sage-dark",
+  // No longer a real payment (cancelled desk payment / superseded link).
+  void: "bg-line text-muted",
+  // Razorpay captured money for a period already paid at the desk: the
+  // owner's to-do list of refunds.
+  refund_due: "bg-amberflag/15 text-amberflag",
 };
 const STATUS_DOT: Record<PaymentStatus, string> = {
   success: "bg-sage",
   failed: "bg-ember",
   pending: "bg-amberflag",
   manual: "bg-sage",
+  void: "bg-muted",
+  refund_due: "bg-amberflag",
 };
 const STATUS_LABEL: Record<PaymentStatus, string> = {
   success: "Success",
   failed: "Failed",
   pending: "Pending",
   manual: "Manual",
+  void: "Void",
+  refund_due: "Refund due",
 };
 
 const TYPE_STYLES: Record<PaymentType, string> = {
@@ -105,8 +137,18 @@ export function Transactions() {
   const [dateTo, setDateTo] = useState("");
   const [locationId, setLocationId] = useState("");
   const [locations, setLocations] = useState<Location[]>([]);
+  // refund_due rows' notes ("duplicates payment …"). The ledger view has no
+  // note column, so owners read it straight from payments (owner-only RLS);
+  // front desk can't, and just sees the badge.
+  const [refundNotes, setRefundNotes] = useState<Record<string, string>>({});
+  const [voiding, setVoiding] = useState<LedgerRow | null>(null);
+
+  // Only the newest request may update the table: switching a filter while an
+  // earlier (slower) load is in flight must not let the stale response win.
+  const requestSeq = useRef(0);
 
   function refresh() {
+    const seq = ++requestSeq.current;
     // Same established pattern as Members.tsx: .range(from, to) +
     // { count: 'exact' } + deterministic ordering (date desc, id as a
     // tiebreak so paging stays stable when timestamps collide).
@@ -128,9 +170,29 @@ export function Transactions() {
       .order("id")
       .range(from, to)
       .then(({ data, count }) => {
+        if (seq !== requestSeq.current) return;
         const r = (data as unknown as LedgerRow[]) ?? [];
         setRows(r);
         setTotal(count ?? r.length);
+
+        const refundIds = r.filter((x) => x.status === "refund_due").map((x) => x.id);
+        if (isOwner && refundIds.length > 0) {
+          supabase
+            .from("payments")
+            .select("id, note")
+            .in("id", refundIds)
+            .then(({ data: notes }) =>
+              setRefundNotes(
+                Object.fromEntries(
+                  (notes ?? [])
+                    .filter((n) => n.note)
+                    .map((n) => [n.id as string, n.note as string]),
+                ),
+              ),
+            );
+        } else {
+          setRefundNotes({});
+        }
       });
   }
 
@@ -259,39 +321,95 @@ export function Transactions() {
                 <th className="px-5 py-2.5 font-medium">Type</th>
                 <th className="px-5 py-2.5 font-medium">Status</th>
                 <th className="px-5 py-2.5 font-medium">Method</th>
+                <th className="px-5 py-2.5 font-medium">Reference</th>
+                <th className="px-5 py-2.5 font-medium">Recorded by</th>
+                <th className="px-5 py-2.5 font-medium">Received on</th>
+                {isOwner && <th className="px-5 py-2.5 font-medium" />}
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr
-                  key={r.id}
-                  className="border-b border-line/70 transition-colors last:border-0 hover:bg-paper/60"
-                >
-                  <td className="px-5 py-3.5 font-medium">{r.member_name}</td>
-                  <td className="px-5 py-3.5 text-muted">
-                    {new Date(r.transaction_date).toLocaleDateString("en-IN", {
-                      day: "numeric",
-                      month: "short",
-                      year: "numeric",
-                    })}
-                  </td>
-                  <td className="px-5 py-3.5">
-                    ₹{Number(r.amount).toLocaleString("en-IN")}
-                  </td>
-                  <td className="px-5 py-3.5 font-mono text-xs text-muted">
-                    {r.provider_payment_id ?? "—"}
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <PaymentTypeBadge type={r.payment_type} />
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <PaymentStatusBadge status={r.status} />
-                  </td>
-                  <td className="px-5 py-3.5 capitalize text-muted">
-                    {r.provider === "razorpay" ? "Razorpay" : "Manual"}
-                  </td>
-                </tr>
-              ))}
+              {rows.map((r) => {
+                // A void row is no longer a payment: struck through, muted.
+                // (is_collected = false for void / refund_due / failed /
+                // pending — nothing on this page sums money, but if a total
+                // is ever added it must filter on is_collected.)
+                const strike = r.is_void ? "line-through text-muted" : "";
+                return (
+                  <tr
+                    key={r.id}
+                    className={clsx(
+                      "border-b border-line/70 transition-colors last:border-0 hover:bg-paper/60",
+                      r.is_void && "opacity-70",
+                    )}
+                  >
+                    <td className={clsx("px-5 py-3.5 font-medium", strike)}>{r.member_name}</td>
+                    <td className={clsx("px-5 py-3.5 text-muted", strike)}>
+                      {new Date(r.transaction_date).toLocaleDateString("en-IN", {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                    </td>
+                    <td className={clsx("px-5 py-3.5", strike)}>
+                      ₹{Number(r.amount).toLocaleString("en-IN")}
+                    </td>
+                    <td className={clsx("px-5 py-3.5 font-mono text-xs text-muted", strike)}>
+                      {r.provider_payment_id ?? "—"}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <PaymentTypeBadge type={r.payment_type} />
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <PaymentStatusBadge status={r.status} />
+                      {r.status === "void" && r.void_reason && (
+                        <p className="mt-1 max-w-[16rem] text-xs text-muted">
+                          Reason: {r.void_reason}
+                        </p>
+                      )}
+                      {r.status === "refund_due" && (
+                        <p className="mt-1 max-w-[16rem] text-xs text-amberflag">
+                          {refundNotes[r.id] ??
+                            "Paid twice for the same period — refund the extra payment in Razorpay."}
+                        </p>
+                      )}
+                    </td>
+                    <td className={clsx("px-5 py-3.5 text-muted", strike)}>
+                      {methodLabel(r.payment_method) ??
+                        (r.provider === "razorpay" ? "Razorpay" : "Manual")}
+                    </td>
+                    <td className={clsx("px-5 py-3.5 text-xs text-muted", strike)}>
+                      {r.reference ?? "—"}
+                    </td>
+                    <td className={clsx("px-5 py-3.5 text-muted", strike)}>
+                      {r.recorded_by_name ?? "—"}
+                    </td>
+                    <td className={clsx("px-5 py-3.5 text-muted", strike)}>
+                      {r.received_at
+                        ? new Date(r.received_at).toLocaleDateString("en-IN", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          })
+                        : "—"}
+                    </td>
+                    {isOwner && (
+                      <td className="px-5 py-3.5">
+                        {/* Only desk-recorded payments can be voided; a captured
+                            Razorpay payment is refunded at Razorpay. */}
+                        {r.status === "manual" && r.provider === "manual" && (
+                          <button
+                            type="button"
+                            onClick={() => setVoiding(r)}
+                            className="focus-ring rounded-lg px-2.5 py-1 text-xs font-medium text-ember-dark transition-colors hover:bg-ember/10"
+                          >
+                            Void
+                          </button>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -328,6 +446,15 @@ export function Transactions() {
             </button>
           </div>
         </div>
+      )}
+      {voiding && isOwner && (
+        <VoidPaymentModal
+          paymentId={voiding.id}
+          memberName={voiding.member_name}
+          amount={Number(voiding.amount)}
+          onClose={() => setVoiding(null)}
+          onVoided={refresh}
+        />
       )}
     </div>
   );
