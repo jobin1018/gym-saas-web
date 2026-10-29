@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X, RefreshCw } from "lucide-react";
 import clsx from "clsx";
 import {
@@ -15,6 +15,20 @@ import {
   retryPendingWrites,
 } from "../lib/offlineQueue";
 import { normalizeLocalPhone, toLocalDigits } from "../lib/phone";
+import {
+  durationAfterPlanChange,
+  formatLongDate,
+  planOptionLabel,
+  pricingForNewMembership,
+  usePlanPricing,
+} from "../lib/bundlePricing";
+import {
+  DURATION_ERROR_MESSAGES,
+  durationErrorCode,
+  useMembershipDurationEdit,
+} from "../lib/membershipDuration";
+import { BundleAddSummary } from "./BundleAddSummary";
+import { DurationEditSection } from "./DurationEditSection";
 
 // Scoped to just basic info + plan/pricing — PT-package creation
 // (AssignCoachSection, now AddPtPackageModal.tsx) and membership freeze/
@@ -65,7 +79,10 @@ export function MemberFormModal({
   initial?: MemberFormInitial;
   plans: Plan[];
   onClose: () => void;
-  onSaved: () => void;
+  // `message` is only passed by the duration-correction path (e.g. "Duration
+  // updated. Membership now runs until …"); callers that ignore it keep
+  // their own wording.
+  onSaved: (message?: string) => void;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   // Stored phone numbers are "91XXXXXXXXXX" (existing data has no "+") —
@@ -101,8 +118,41 @@ export function MemberFormModal({
   const [networkQueuedId, setNetworkQueuedId] = useState<string | null>(null);
   const [serverError, setServerError] = useState("");
 
+  // Bundle details (duration/total/free months) for every plan — the `plans`
+  // prop only carries id, name, amount. durationTouched stops the bundle
+  // prefill below from overwriting a duration staff already typed.
+  const pricing = usePlanPricing();
+  const durationTouched = useRef(false);
+  useEffect(() => {
+    if (mode !== "add" || durationTouched.current) return;
+    setDurationMonths((current) =>
+      durationAfterPlanChange(undefined, pricing.get(planId), current),
+    );
+    // Runs when the plan details arrive; later plan changes go through
+    // handlePlanChange.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pricing]);
+
   const planChanged = mode === "edit" && initial && planId !== initial.plan_id;
   const selectedPlan = plans.find((p) => p.id === planId);
+  const selectedPricing = pricing.get(planId);
+
+  // Edit mode only. The hook is inert (no fetch) in add mode.
+  const dur = useMembershipDurationEdit({
+    enabled: mode === "edit" && !!initial,
+    membershipId: initial?.membership_id ?? "",
+    initialStatus: initial?.status ?? "active",
+    plan: selectedPricing,
+  });
+
+  function handlePlanChange(nextId: string) {
+    if (mode === "add") {
+      setDurationMonths((current) =>
+        durationAfterPlanChange(selectedPricing, pricing.get(nextId), current),
+      );
+    }
+    setPlanId(nextId);
+  }
   const parsedDuration = Number(durationMonths);
   const durationValid =
     Number.isInteger(parsedDuration) && parsedDuration >= 1 && parsedDuration <= 36;
@@ -123,10 +173,14 @@ export function MemberFormModal({
   // What the signup-time trigger (or the explicit override) will snapshot
   // into memberships.total_price — shown so the amount charged isn't a
   // surprise before submit.
+  // A bundle at its own duration is billed its fixed total (not the rounded
+  // monthly rate x months, which drifts by paise when it doesn't divide).
   const totalPreview =
-    mode === "add" && effectiveRate != null && !Number.isNaN(effectiveRate) && durationValid
-      ? effectiveRate * parsedDuration
-      : null;
+    mode === "add" && !customPriceEnabled && selectedPricing && durationValid
+      ? pricingForNewMembership(selectedPricing, parsedDuration).total
+      : mode === "add" && effectiveRate != null && !Number.isNaN(effectiveRate) && durationValid
+        ? effectiveRate * parsedDuration
+        : null;
 
   function validate(): boolean {
     const errors: Record<string, string> = {};
@@ -142,10 +196,92 @@ export function MemberFormModal({
     return Object.keys(errors).length === 0;
   }
 
+  // Edit + changed duration. Never queued offline: details save through the
+  // same updateMemberAndMembership() as the normal edit, then the RPC; any
+  // failure keeps the form open with the entered values.
+  async function runDurationSave() {
+    if (!initial) return;
+    setServerError("");
+    setSubmitting(true);
+    const normalizedPhone = normalizeLocalPhone(phone).value!;
+    const detailsChanged =
+      name.trim() !== initial.name ||
+      normalizedPhone !== initial.phone ||
+      planId !== initial.plan_id ||
+      whatsappOptIn !== initial.whatsapp_opt_in ||
+      startDate !== initial.start_date ||
+      status !== initial.status;
+    let detailsSaved = false;
+    try {
+      if (detailsChanged) {
+        try {
+          await updateMemberAndMembership({
+            member_id: initial.member_id,
+            membership_id: initial.membership_id,
+            name: name.trim(),
+            phone: normalizedPhone,
+            plan_id: planId,
+            start_date: startDate,
+            status,
+            whatsapp_opt_in: whatsappOptIn,
+          });
+          detailsSaved = true;
+        } catch (err) {
+          setServerError(
+            isNetworkError(err)
+              ? "Couldn't reach the server — nothing was changed. Your entries are still here; try again."
+              : "Something went wrong — nothing was changed. Please try again.",
+          );
+          return;
+        }
+      }
+
+      try {
+        const result = await dur.apply();
+        const ends = formatLongDate(result.current_period_end);
+        onSaved(
+          `Duration updated. Membership now runs until ${ends}.` +
+            // Front desk can't read payments, so this is the first they learn of it.
+            (result.has_payments && !dur.isOwner
+              ? " This member already has a payment recorded — the payment itself was not changed."
+              : ""),
+        );
+        onClose();
+      } catch (err) {
+        const code = durationErrorCode(err);
+        if (code === "total_required") dur.onTotalRequiredByServer(err);
+        const reason = isNetworkError(err)
+          ? "couldn't reach the server"
+          : code
+            ? DURATION_ERROR_MESSAGES[code]
+            : "something went wrong";
+        setServerError(
+          detailsSaved
+            ? `Saved: the member details. Not saved: the duration change — ${reason}`
+            : `Nothing was changed — ${reason}`,
+        );
+        if (detailsSaved) onSaved("Member details saved. Duration was not changed.");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setServerError("");
     if (!validate()) return;
+
+    // An invalid duration entry is surfaced here rather than silently ignored.
+    if (mode === "edit" && (dur.changed || (dur.loaded && !dur.durationValid))) {
+      if (!dur.validate()) return;
+      if (dur.needsPaymentsConfirm) {
+        dur.setAwaitingPaymentsConfirm(true);
+        return;
+      }
+      await runDurationSave();
+      return;
+    }
 
     setSubmitting(true);
     // validate() already confirmed this parses, so the assertion is safe.
@@ -324,12 +460,12 @@ export function MemberFormModal({
               </label>
               <select
                 value={planId}
-                onChange={(e) => setPlanId(e.target.value)}
+                onChange={(e) => handlePlanChange(e.target.value)}
                 className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
               >
                 {plans.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name} — ₹{p.amount.toLocaleString("en-IN")}/mo
+                    {planOptionLabel(p, pricing.get(p.id))}
                   </option>
                 ))}
               </select>
@@ -344,6 +480,27 @@ export function MemberFormModal({
                 </p>
               )}
             </div>
+
+            {mode === "edit" && (
+              <DurationEditSection
+                d={dur}
+                currentPlan={selectedPricing}
+                busy={submitting}
+                onConfirmPayments={() => {
+                  dur.confirmPayments();
+                  runDurationSave();
+                }}
+              />
+            )}
+
+            {mode === "add" && !customPriceEnabled && (
+              <BundleAddSummary
+                plan={selectedPricing}
+                duration={parsedDuration}
+                durationValid={durationValid}
+                startDate={startDate}
+              />
+            )}
 
             {mode === "add" && (
               <>
@@ -390,7 +547,10 @@ export function MemberFormModal({
                   <input
                     inputMode="numeric"
                     value={durationMonths}
-                    onChange={(e) => setDurationMonths(e.target.value)}
+                    onChange={(e) => {
+                      durationTouched.current = true;
+                      setDurationMonths(e.target.value);
+                    }}
                     className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm shadow-sm transition-shadow"
                   />
                   {fieldErrors.duration && (
