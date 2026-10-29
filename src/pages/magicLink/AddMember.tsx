@@ -13,6 +13,14 @@ import {
   type NewMemberPayload,
 } from "../../lib/memberWrites";
 import { PLAN_AMOUNT_MIN, PLAN_AMOUNT_MAX } from "../../lib/planWrites";
+import {
+  PLAN_PRICING_COLUMNS,
+  durationAfterPlanChange,
+  planOptionLabel,
+  pricingForNewMembership,
+  type PlanPricing,
+} from "../../lib/bundlePricing";
+import { BundleAddSummary } from "../../components/BundleAddSummary";
 import { normalizeLocalPhone } from "../../lib/phone";
 import {
   getPendingWrites,
@@ -20,7 +28,7 @@ import {
   retryPendingWrites,
 } from "../../lib/offlineQueue";
 
-type Plan = { id: string; name: string; amount: number };
+type Plan = PlanPricing;
 
 // What's showing once the link itself has redeemed and the form is up —
 // distinct from MagicLinkShell's own checking/error/ready, which is only
@@ -126,12 +134,20 @@ export function AddMemberLinkPage() {
     // only, front desk can't sign someone up onto a retired plan.
     supabase
       .from("membership_plans")
-      .select("id, name, amount")
+      .select(PLAN_PRICING_COLUMNS)
       .eq("active", true)
       .then(({ data }) => {
         if (!data) return;
-        setPlans(data);
-        setPlanId((prev) => prev || data[0]?.id || "");
+        const loaded = data as Plan[];
+        setPlans(loaded);
+        setPlanId((prev) => prev || loaded[0]?.id || "");
+        // A bundle as the first/default plan prefills its own duration
+        // (the database can't tell an omitted duration from the default 1).
+        if (loaded[0]) {
+          setDurationMonths((prev) =>
+            durationAfterPlanChange(undefined, loaded[0], prev),
+          );
+        }
       });
   }
 
@@ -149,10 +165,22 @@ export function AddMemberLinkPage() {
   const effectiveRate = customPriceEnabled ? parsedCustomRate : selectedPlan?.amount;
   const renewalPreview =
     startDate && durationValid ? addMonths(startDate, parsedDuration) : null;
+  // A bundle at its own duration is billed its fixed total, not the rounded
+  // monthly rate x months (4500 / 7 months would drift by paise).
   const totalPreview =
-    effectiveRate != null && !Number.isNaN(effectiveRate) && durationValid
-      ? effectiveRate * parsedDuration
-      : null;
+    !customPriceEnabled && selectedPlan && durationValid
+      ? pricingForNewMembership(selectedPlan, parsedDuration).total
+      : effectiveRate != null && !Number.isNaN(effectiveRate) && durationValid
+        ? effectiveRate * parsedDuration
+        : null;
+
+  function handlePlanChange(nextId: string) {
+    const next = plans.find((p) => p.id === nextId);
+    setDurationMonths((current) =>
+      durationAfterPlanChange(selectedPlan, next, current),
+    );
+    setPlanId(nextId);
+  }
 
   function validate(): boolean {
     const errors: Record<string, string> = {};
@@ -328,12 +356,12 @@ export function AddMemberLinkPage() {
               </label>
               <select
                 value={planId}
-                onChange={(e) => setPlanId(e.target.value)}
+                onChange={(e) => handlePlanChange(e.target.value)}
                 className="focus-ring w-full rounded-lg border border-line bg-white px-3 py-3 text-base shadow-sm transition-shadow"
               >
                 {plans.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name} — ₹{p.amount.toLocaleString("en-IN")}/mo
+                    {planOptionLabel(p, p)}
                   </option>
                 ))}
               </select>
@@ -341,6 +369,15 @@ export function AddMemberLinkPage() {
                 <p className="mt-1 text-xs text-ember-dark">{fieldErrors.plan}</p>
               )}
             </div>
+
+            {!customPriceEnabled && (
+              <BundleAddSummary
+                plan={selectedPlan}
+                duration={parsedDuration}
+                durationValid={durationValid}
+                startDate={startDate}
+              />
+            )}
 
             <label className="flex min-h-12 items-center gap-3 rounded-lg border border-line/70 px-3 py-2 text-sm">
               <input
