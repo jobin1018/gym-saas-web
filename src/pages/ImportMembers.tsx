@@ -16,7 +16,12 @@ import {
   retryPendingWrites,
 } from "../lib/offlineQueue";
 
-type Plan = { id: string; name: string };
+type Plan = {
+  id: string;
+  name: string;
+  duration_months: number | null;
+  total_price: number | null;
+};
 
 const EXCEL_EXTENSION_RE = /\.xlsx?$/i;
 const EXCEL_MIME_RE = /spreadsheet|excel/i;
@@ -38,13 +43,20 @@ export function ImportMembers() {
   useEffect(() => {
     supabase
       .from("membership_plans")
-      .select("id, name")
+      .select("id, name, duration_months, total_price")
       .eq("active", true)
       .then(({ data }) => data && setPlans(data));
   }, []);
 
   async function handleFile(file: File) {
     const planNames = new Set(plans.map((p) => p.name));
+    // A bundle row with no duration takes the bundle's own; a file duration
+    // that differs gets flagged in the preview (mapRowsToMembers).
+    const bundleDurations = new Map(
+      plans
+        .filter((p) => p.total_price != null && p.duration_months != null)
+        .map((p) => [p.name, p.duration_months as number]),
+    );
     setSummary(null);
     setFileError(null);
     setNetworkQueuedId(null);
@@ -55,8 +67,8 @@ export function ImportMembers() {
       // handleImport, the offline queue) knows or cares which format the
       // file came from.
       const parsed = isExcelFile(file)
-        ? await parseMembersExcel(await file.arrayBuffer(), planNames)
-        : parseMembersCsv(await file.text(), planNames);
+        ? await parseMembersExcel(await file.arrayBuffer(), planNames, bundleDurations)
+        : parseMembersCsv(await file.text(), planNames, bundleDurations);
       setRows(parsed);
     } catch {
       // A real new failure mode Excel adds: exceljs genuinely rejects on a
@@ -89,16 +101,16 @@ export function ImportMembers() {
 
   async function handleImport() {
     const planByName = new Map(plans.map((p) => [p.name, p.id]));
-    // CSV format doesn't carry a duration column (see the "CSV columns" hint
-    // above) — every imported row gets the old implicit default of 1 month.
-    // A per-row duration column is a follow-up if bulk multi-month imports
-    // turn out to be needed.
+    // duration_months: the file's optional column, else a bundle's own
+    // duration, else the old implicit default of 1 (resolved in csv.ts).
+    // Bundle rows at the bundle's duration get its total/free months from
+    // the server; any other duration is priced at the monthly rate.
     const importRows: CsvImportRow[] = validRows.map((r) => ({
       name: r.name,
       phone: r.phone,
       plan_id: planByName.get(r.plan_name)!,
       start_date: r.start_date,
-      duration_months: 1,
+      duration_months: r.duration_months,
     }));
 
     setImporting(true);
@@ -157,7 +169,8 @@ export function ImportMembers() {
             Import members
           </h1>
           <p className="mt-1 text-sm text-muted">
-            CSV or Excel columns: name, phone, plan_name, start_date (optional).
+            CSV or Excel columns: name, phone, plan_name, start_date and
+            duration_months (both optional).
           </p>
         </div>
         <button
@@ -244,6 +257,7 @@ export function ImportMembers() {
                   <th className="px-4 py-2.5 font-medium">Name</th>
                   <th className="px-4 py-2.5 font-medium">Phone</th>
                   <th className="px-4 py-2.5 font-medium">Plan</th>
+                  <th className="px-4 py-2.5 font-medium">Months</th>
                   <th className="px-4 py-2.5 font-medium">Start</th>
                   <th className="px-4 py-2.5 font-medium">Issues</th>
                 </tr>
@@ -261,9 +275,16 @@ export function ImportMembers() {
                     <td className="px-4 py-2.5">{r.name || "—"}</td>
                     <td className="px-4 py-2.5">{r.phone || "—"}</td>
                     <td className="px-4 py-2.5">{r.plan_name || "—"}</td>
+                    <td className="px-4 py-2.5">{r.duration_months}</td>
                     <td className="px-4 py-2.5">{r.start_date}</td>
                     <td className="px-4 py-2.5 text-ember-dark">
                       {r.errors.join(", ")}
+                      {r.warnings.length > 0 && (
+                        <span className="text-amberflag">
+                          {r.errors.length > 0 ? ", " : ""}
+                          {r.warnings.join(", ")}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}

@@ -57,7 +57,12 @@ export type ParsedMemberRow = {
   phone: string;
   plan_name: string;
   start_date: string;
+  // Months for the new membership: the file's duration_months column if
+  // given, else the bundle plan's own duration, else 1 (the old default).
+  duration_months: number;
   errors: string[];
+  // Imported anyway, but worth a look (e.g. priced off the bundle).
+  warnings: string[];
 };
 
 // The format-agnostic half of the pipeline: once ANY source (CSV text,
@@ -69,6 +74,8 @@ export type ParsedMemberRow = {
 export function mapRowsToMembers(
   rows: string[][],
   validPlanNames: Set<string>,
+  // plan name -> the bundle's own duration, for bundle plans only.
+  bundleDurations: Map<string, number> = new Map(),
 ): ParsedMemberRow[] {
   if (rows.length === 0) return [];
 
@@ -77,6 +84,7 @@ export function mapRowsToMembers(
   const phoneIdx = header.indexOf("phone");
   const planIdx = header.indexOf("plan_name");
   const startIdx = header.indexOf("start_date");
+  const durationIdx = header.indexOf("duration_months");
 
   const dataRows = rows.slice(1);
 
@@ -95,13 +103,31 @@ export function mapRowsToMembers(
     else if (!validPlanNames.has(plan_name))
       errors.push(`Unrecognized plan "${plan_name}"`);
 
+    const warnings: string[] = [];
+    const bundleDuration = bundleDurations.get(plan_name);
+    const rawDuration = durationIdx >= 0 ? (cells[durationIdx] ?? "").trim() : "";
+    let duration_months = bundleDuration ?? 1;
+    if (rawDuration !== "") {
+      const parsed = Number(rawDuration);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 36) {
+        errors.push("Duration must be a whole number of months between 1 and 36");
+      } else {
+        duration_months = parsed;
+        if (bundleDuration != null && parsed !== bundleDuration) {
+          warnings.push("priced at monthly rate, not bundle");
+        }
+      }
+    }
+
     return {
       line: i + 2,
       name,
       phone: normalizedPhone ?? rawPhone,
       plan_name,
       start_date,
+      duration_months,
       errors,
+      warnings,
     };
   });
 }
@@ -109,6 +135,7 @@ export function mapRowsToMembers(
 export function parseMembersCsv(
   text: string,
   validPlanNames: Set<string>,
+  bundleDurations?: Map<string, number>,
 ): ParsedMemberRow[] {
-  return mapRowsToMembers(parseCsv(text), validPlanNames);
+  return mapRowsToMembers(parseCsv(text), validPlanNames, bundleDurations);
 }

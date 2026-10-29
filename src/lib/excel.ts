@@ -55,6 +55,7 @@ async function excelToRows(buffer: ArrayBuffer): Promise<string[][]> {
 export async function parseMembersExcel(
   buffer: ArrayBuffer,
   validPlanNames: Set<string>,
+  bundleDurations?: Map<string, number>,
 ): Promise<ParsedMemberRow[]> {
-  return mapRowsToMembers(await excelToRows(buffer), validPlanNames);
+  return mapRowsToMembers(await excelToRows(buffer), validPlanNames, bundleDurations);
 }
