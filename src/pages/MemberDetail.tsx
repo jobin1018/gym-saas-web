@@ -9,9 +9,14 @@ import {
   ChevronRight,
   CheckCircle2,
   Clock,
+  Wallet,
 } from "lucide-react";
 import clsx from "clsx";
 import { supabase } from "../lib/supabase";
+import { useAuth } from "../contexts/AuthContext";
+import { RecordPaymentModal } from "../components/RecordPaymentModal";
+import { fetchPtPackagePaid } from "../lib/manualPayments";
+import { methodLabel } from "../lib/paymentRules";
 import { StatusBadge } from "../components/StatusBadge";
 import { Toast, type ToastState } from "../components/Toast";
 import { MemberFormModal, type MemberFormInitial, type Plan } from "../components/MemberFormModal";
@@ -49,6 +54,7 @@ type PtPackage = {
   sessions_purchased: number;
   sessions_used: number;
   coach_id: string;
+  price: number;
 };
 
 const GOAL_LABELS: Record<string, string> = {
@@ -142,6 +148,10 @@ function DeactivateConfirmModal({
 
 export function MemberDetail() {
   const { id } = useParams<{ id: string }>();
+  const { claims } = useAuth();
+  // Payments are for the sales desk only: coaches never see them (the views
+  // return nothing for a coach anyway; this keeps the controls out of the DOM).
+  const canRecordPayments = claims?.role === "owner" || claims?.role === "front_desk";
 
   const [member, setMember] = useState<MemberRow | null | undefined>(undefined);
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -150,6 +160,10 @@ export function MemberDetail() {
   const [showEdit, setShowEdit] = useState(false);
   const [showDeactivate, setShowDeactivate] = useState(false);
   const [showAddPt, setShowAddPt] = useState(false);
+  const [showRecordPayment, setShowRecordPayment] = useState(false);
+  const [showRecordPtPayment, setShowRecordPtPayment] = useState(false);
+  // null = unknown (not loaded, or not visible to this role) -> no badge.
+  const [ptPaid, setPtPaid] = useState<boolean | null>(null);
 
   const [ptPackage, setPtPackage] = useState<PtPackage | null | undefined>(undefined);
   const [coachName, setCoachName] = useState<string | null>(null);
@@ -180,7 +194,7 @@ export function MemberDetail() {
     if (!id) return;
     supabase
       .from("pt_packages")
-      .select("id, goal, sessions_purchased, sessions_used, coach_id")
+      .select("id, goal, sessions_purchased, sessions_used, coach_id, price")
       .eq("member_id", id)
       .eq("status", "active")
       .maybeSingle()
@@ -247,6 +261,21 @@ export function MemberDetail() {
     loadAttendance();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Paid/unpaid badge. Depends on the role too: claims arrive asynchronously,
+  // and a coach never fetches this at all.
+  const ptPackageId = ptPackage?.id;
+  function loadPtPaid() {
+    if (ptPackageId && canRecordPayments) {
+      fetchPtPackagePaid(ptPackageId).then(setPtPaid);
+    } else {
+      setPtPaid(null);
+    }
+  }
+  useEffect(() => {
+    loadPtPaid();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ptPackageId, canRecordPayments]);
 
   useEffect(() => {
     loadPtHistory(ptPage);
@@ -395,6 +424,28 @@ export function MemberDetail() {
           <p className="text-sm text-muted">No membership on record.</p>
         )}
 
+        {ms && canRecordPayments && (
+          <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-line pt-5">
+            {ms.status === "frozen" ? (
+              <p className="text-xs text-muted">
+                Record payment: unfreeze this membership first.
+              </p>
+            ) : ms.status === "cancelled" ? (
+              <p className="text-xs text-muted">
+                Record payment: this membership is cancelled.
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowRecordPayment(true)}
+                className="focus-ring flex items-center gap-1.5 rounded-lg bg-ember px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:bg-ember-dark hover:shadow-glow-ember active:scale-[0.98]"
+              >
+                <Wallet size={14} /> Record payment
+              </button>
+            )}
+          </div>
+        )}
+
         {ms && ms.status !== "cancelled" && (
           <div className="mt-5 border-t border-line pt-5">
             <MembershipFreezeSection
@@ -457,6 +508,29 @@ export function MemberDetail() {
                 <p className="mt-1 font-medium">{coachName ?? "No longer active"}</p>
               </div>
             </div>
+
+            {ptPaid !== null && (
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <span
+                  className={clsx(
+                    "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
+                    ptPaid ? "bg-sage/10 text-sage-dark" : "bg-amberflag/15 text-amberflag",
+                  )}
+                >
+                  <span className={clsx("h-1.5 w-1.5 rounded-full", ptPaid ? "bg-sage" : "bg-amberflag")} />
+                  {ptPaid ? "Paid" : "Unpaid"}
+                </span>
+                {!ptPaid && (
+                  <button
+                    type="button"
+                    onClick={() => setShowRecordPtPayment(true)}
+                    className="focus-ring flex items-center gap-1.5 rounded-lg bg-ember px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:bg-ember-dark hover:shadow-glow-ember active:scale-[0.98]"
+                  >
+                    <Wallet size={14} /> Record payment
+                  </button>
+                )}
+              </div>
+            )}
 
             <div className="mt-5 border-t border-line pt-4">
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
@@ -544,7 +618,7 @@ export function MemberDetail() {
                     <td className="px-5 py-3">
                       {new Date(r.transaction_date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                     </td>
-                    <td className="px-5 py-3">₹{Number(r.amount).toLocaleString("en-IN")}</td>
+                    <td className={clsx("px-5 py-3", r.is_void && "text-muted line-through")}>₹{Number(r.amount).toLocaleString("en-IN")}</td>
                     <td className="px-5 py-3 font-mono text-xs text-muted">{r.provider_payment_id ?? "—"}</td>
                     <td className="px-5 py-3">
                       <span className={clsx("rounded-full px-2.5 py-0.5 text-xs font-medium", r.payment_type === "personal_training" ? "bg-amberflag/15 text-amberflag" : "bg-ink/5 text-ink")}>
@@ -557,15 +631,19 @@ export function MemberDetail() {
                           "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
                           r.status === "failed"
                             ? "bg-ember/10 text-ember-dark"
-                            : r.status === "pending"
+                            : r.status === "pending" || r.status === "refund_due"
                               ? "bg-amberflag/15 text-amberflag"
-                              : "bg-sage/10 text-sage-dark",
+                              : r.status === "void"
+                                ? "bg-line text-muted"
+                                : "bg-sage/10 text-sage-dark",
                         )}
                       >
-                        {r.status.charAt(0).toUpperCase() + r.status.slice(1)}
+                        {r.status === "refund_due"
+                          ? "Refund due"
+                          : r.status.charAt(0).toUpperCase() + r.status.slice(1)}
                       </span>
                     </td>
-                    <td className="px-5 py-3 capitalize text-muted">{r.provider === "razorpay" ? "Razorpay" : "Manual"}</td>
+                    <td className="px-5 py-3 capitalize text-muted">{methodLabel(r.payment_method) ?? (r.provider === "razorpay" ? "Razorpay" : "Manual")}</td>
                   </tr>
                 ))}
               </tbody>
@@ -659,6 +737,45 @@ export function MemberDetail() {
           onSaved={(message) => {
             loadMember();
             setToast({ kind: "success", message: message ?? "Member updated." });
+          }}
+        />
+      )}
+      {showRecordPayment && ms && canRecordPayments && (
+        <RecordPaymentModal
+          subject={{
+            kind: "membership",
+            membershipId: ms.id,
+            memberName: member.name,
+            planName: plan?.name ?? "—",
+            currentEnd: ms.current_period_end,
+            durationMonths: ms.duration_months,
+            // Legacy rows without a snapshot fall back to rate x duration; the
+            // server is the arbiter (amount_mismatch quotes its own figure).
+            total: ms.total_price ?? (plan?.amount ?? 0) * ms.duration_months,
+          }}
+          onClose={() => setShowRecordPayment(false)}
+          onRecorded={(message) => {
+            loadMember();
+            loadTransactions(txPage);
+            setToast({ kind: "success", message });
+          }}
+        />
+      )}
+      {showRecordPtPayment && ptPackage && canRecordPayments && (
+        <RecordPaymentModal
+          subject={{
+            kind: "pt",
+            ptPackageId: ptPackage.id,
+            memberName: member.name,
+            label: `PT package · ${GOAL_LABELS[ptPackage.goal] ?? ptPackage.goal}`,
+            price: ptPackage.price,
+          }}
+          onClose={() => setShowRecordPtPayment(false)}
+          onAlreadyPaid={loadPtPaid}
+          onRecorded={(message) => {
+            loadPtPaid();
+            loadTransactions(txPage);
+            setToast({ kind: "success", message });
           }}
         />
       )}
