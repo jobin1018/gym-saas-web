@@ -793,8 +793,13 @@ export function MemberDetail() {
       {showAddPt && (
         <AddPtPackageModal
           memberId={member.id}
+          memberName={member.name}
           onClose={() => setShowAddPt(false)}
           onCreated={loadPtPackage}
+          onPaid={() => {
+            loadPtPaid();
+            loadTransactions(txPage);
+          }}
         />
       )}
     </div>

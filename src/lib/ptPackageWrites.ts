@@ -88,17 +88,27 @@ export type NewPtPackagePayload = {
 // sessions_purchased is intentionally NOT sent — the pt_packages_derive_sessions
 // trigger derives it as duration_months * sessions_per_month
 // (20260829098500_pt_packages_session_calc.sql).
-export async function createPtPackage(payload: NewPtPackagePayload): Promise<void> {
+//
+// Returns the new package's id so the caller can offer "Record payment now?"
+// (a package sale no longer records money by itself — see
+// 20261101090000_pt_packages_manual_payment.sql). Callers that don't need it
+// simply ignore it.
+export async function createPtPackage(payload: NewPtPackagePayload): Promise<string> {
   const claims = await getCurrentClaims();
-  const { error } = await supabase.from("pt_packages").insert({
-    organization_id: claims.organizationId,
-    member_id: payload.member_id,
-    coach_id: payload.coach_id,
-    goal: payload.goal,
-    duration_months: payload.duration_months,
-    sessions_per_month: payload.sessions_per_month,
-    price: payload.price,
-    start_date: payload.start_date,
-  });
+  const { data, error } = await supabase
+    .from("pt_packages")
+    .insert({
+      organization_id: claims.organizationId,
+      member_id: payload.member_id,
+      coach_id: payload.coach_id,
+      goal: payload.goal,
+      duration_months: payload.duration_months,
+      sessions_per_month: payload.sessions_per_month,
+      price: payload.price,
+      start_date: payload.start_date,
+    })
+    .select("id")
+    .single();
   if (error) throw error;
+  return data.id as string;
 }

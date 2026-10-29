@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
+import { useAuth } from "../contexts/AuthContext";
+import { RecordPaymentModal } from "./RecordPaymentModal";
 import {
   GOAL_OPTIONS,
   createPtPackage,
@@ -21,13 +23,26 @@ import {
 // is just one of two entry points to them now.
 export function AddPtPackageModal({
   memberId,
+  memberName,
   onClose,
   onCreated,
+  onPaid,
 }: {
   memberId: string;
+  // Only used to label the optional "Record payment now?" step.
+  memberName?: string;
   onClose: () => void;
   onCreated: () => void;
+  // Fired after the optional payment is recorded (the caller refreshes its
+  // Paid badge / transactions).
+  onPaid?: () => void;
 }) {
+  const { claims } = useAuth();
+  const canRecordPayments = claims?.role === "owner" || claims?.role === "front_desk";
+  // Set once the package exists, so a payment can be offered for it.
+  const [created, setCreated] = useState<{ id: string; price: number; goal: Goal } | null>(null);
+  const [showRecord, setShowRecord] = useState(false);
+  const [paid, setPaid] = useState(false);
   const [coaches, setCoaches] = useState<Coach[]>([]);
   const [coachId, setCoachId] = useState("");
   const [goal, setGoal] = useState<Goal>("general_fitness");
@@ -64,7 +79,7 @@ export function AddPtPackageModal({
 
     setSubmitting(true);
     try {
-      await createPtPackage({
+      const packageId = await createPtPackage({
         member_id: memberId,
         coach_id: coachId,
         goal,
@@ -73,6 +88,7 @@ export function AddPtPackageModal({
         price: validated.parsed.price,
         start_date: startDate,
       });
+      setCreated({ id: packageId, price: validated.parsed.price, goal });
 
       const coachName = coaches.find((c) => c.id === coachId)?.name ?? "coach";
       setSuccess(`Package created with ${coachName}.`);
@@ -102,6 +118,32 @@ export function AddPtPackageModal({
         {success ? (
           <div className="space-y-4">
             <p className="text-sm text-sage-dark">{success}</p>
+            {paid && <p className="text-sm text-sage-dark">Payment recorded.</p>}
+            {created && canRecordPayments && created.price > 0 && !paid && (
+              <div className="rounded-lg border border-line bg-paper p-3">
+                <p className="text-sm font-medium">Record payment now?</p>
+                <p className="mt-0.5 text-xs text-muted">
+                  The package is unpaid until a payment is recorded. You can
+                  also do it later from the member's page.
+                </p>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowRecord(true)}
+                    className="focus-ring rounded-lg bg-ember px-3 py-1.5 text-sm font-medium text-white hover:bg-ember-dark"
+                  >
+                    Record payment
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="focus-ring rounded-lg px-3 py-1.5 text-sm font-medium text-muted hover:bg-white"
+                  >
+                    Skip
+                  </button>
+                </div>
+              </div>
+            )}
             <button
               type="button"
               onClick={onClose}
@@ -220,6 +262,26 @@ export function AddPtPackageModal({
           </div>
         )}
       </div>
+      {showRecord && created && (
+        <RecordPaymentModal
+          subject={{
+            kind: "pt",
+            ptPackageId: created.id,
+            memberName: memberName ?? "Member",
+            label: `PT package · ${GOAL_OPTIONS.find((g) => g.value === created.goal)?.label ?? created.goal}`,
+            price: created.price,
+          }}
+          onClose={() => setShowRecord(false)}
+          onAlreadyPaid={() => {
+            setPaid(true);
+            onPaid?.();
+          }}
+          onRecorded={() => {
+            setPaid(true);
+            onPaid?.();
+          }}
+        />
+      )}
     </div>
   );
 }

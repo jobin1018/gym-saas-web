@@ -5,6 +5,7 @@ import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../contexts/AuthContext";
 import { redeemMagicLink, MagicLinkError } from "../../lib/magicLink";
 import { MagicLinkShell, type MagicLinkStep } from "../../components/MagicLinkShell";
+import { RecordPaymentModal } from "../../components/RecordPaymentModal";
 import {
   GOAL_OPTIONS,
   createPtPackage,
@@ -29,7 +30,8 @@ const SEARCH_RESULT_LIMIT = 8;
 // isn't introducing an inconsistency, just not solving a pre-existing gap.
 export function AddPtPackageLinkPage() {
   const [searchParams] = useSearchParams();
-  const { completeLogin } = useAuth();
+  const { completeLogin, claims } = useAuth();
+  const canRecordPayments = claims?.role === "owner" || claims?.role === "front_desk";
   const [step, setStep] = useState<MagicLinkStep>("checking");
   const [errorMessage, setErrorMessage] = useState("");
   const [staffName, setStaffName] = useState("");
@@ -54,6 +56,10 @@ export function AddPtPackageLinkPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  // The just-created package, so "Record payment now?" can be offered.
+  const [created, setCreated] = useState<{ id: string; price: number; goal: Goal } | null>(null);
+  const [showRecord, setShowRecord] = useState(false);
+  const [paid, setPaid] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -150,7 +156,7 @@ export function AddPtPackageLinkPage() {
 
     setSubmitting(true);
     try {
-      await createPtPackage({
+      const packageId = await createPtPackage({
         member_id: selectedMember.id,
         coach_id: coachId,
         goal,
@@ -159,6 +165,7 @@ export function AddPtPackageLinkPage() {
         price: validated.parsed.price,
         start_date: startDate,
       });
+      setCreated({ id: packageId, price: validated.parsed.price, goal });
       setDone(true);
     } catch {
       setError("Couldn't create the package — please try again.");
@@ -185,6 +192,46 @@ export function AddPtPackageLinkPage() {
             </span>
             . You can close this page now.
           </p>
+          {paid && <p className="mt-3 text-sm text-sage-dark">Payment recorded.</p>}
+          {created && canRecordPayments && created.price > 0 && !paid && (
+            <div className="mt-5 rounded-lg border border-line bg-paper p-4 text-left">
+              <p className="text-sm font-medium">Record payment now?</p>
+              <p className="mt-0.5 text-xs text-muted">
+                The package stays unpaid until a payment is recorded. You can
+                also do it later from the member's page.
+              </p>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRecord(true)}
+                  className="focus-ring flex-1 rounded-lg bg-ember px-4 py-3 text-base font-medium text-white hover:bg-ember-dark"
+                >
+                  Record payment
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreated(null)}
+                  className="focus-ring rounded-lg px-4 py-3 text-base font-medium text-muted hover:bg-white"
+                >
+                  Skip
+                </button>
+              </div>
+            </div>
+          )}
+          {showRecord && created && selectedMember && (
+            <RecordPaymentModal
+              subject={{
+                kind: "pt",
+                ptPackageId: created.id,
+                memberName: selectedMember.name,
+                label: `PT package · ${GOAL_OPTIONS.find((g) => g.value === created.goal)?.label ?? created.goal}`,
+                price: created.price,
+              }}
+              onClose={() => setShowRecord(false)}
+              onAlreadyPaid={() => setPaid(true)}
+              onRecorded={() => setPaid(true)}
+            />
+          )}
         </div>
       ) : (
         <>
