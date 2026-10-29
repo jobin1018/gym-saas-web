@@ -15,6 +15,7 @@ import { supabase } from "../lib/supabase";
 import { StatusBadge } from "../components/StatusBadge";
 import { Toast, type ToastState } from "../components/Toast";
 import { MemberFormModal, type MemberFormInitial, type Plan } from "../components/MemberFormModal";
+import { durationWithBonusLabel } from "../lib/bundlePricing";
 import { MembershipFreezeSection } from "../components/MembershipFreezeSection";
 import { AddPtPackageModal } from "../components/AddPtPackageModal";
 import { cancelMembership, updateWhatsappOptIn } from "../lib/memberDetail";
@@ -30,6 +31,7 @@ type MembershipRow = {
   start_date: string;
   duration_months: number;
   total_price: number | null;
+  bonus_months: number;
   membership_plans: { id: string; name: string; amount: number; active: boolean } | null;
 };
 
@@ -167,7 +169,7 @@ export function MemberDetail() {
     supabase
       .from("members")
       .select(
-        "id, name, phone, whatsapp_opt_in, memberships(id, plan_id, status, current_period_end, start_date, duration_months, total_price, membership_plans(id, name, amount, active))",
+        "id, name, phone, whatsapp_opt_in, memberships(id, plan_id, status, current_period_end, start_date, duration_months, total_price, bonus_months, membership_plans(id, name, amount, active))",
       )
       .eq("id", id)
       .maybeSingle()
@@ -358,6 +360,11 @@ export function MemberDetail() {
             <div>
               <p className="text-xs text-muted">Plan</p>
               <p className="mt-1 font-medium">{plan?.name ?? "—"}</p>
+              {ms.bonus_months > 0 && (
+                <p className="mt-0.5 text-xs text-muted">
+                  {durationWithBonusLabel(ms.duration_months, ms.bonus_months)}
+                </p>
+              )}
             </div>
             <div>
               <p className="text-xs text-muted">Duration</p>
@@ -649,9 +656,9 @@ export function MemberDetail() {
           initial={editInitial()}
           plans={plans}
           onClose={() => setShowEdit(false)}
-          onSaved={() => {
+          onSaved={(message) => {
             loadMember();
-            setToast({ kind: "success", message: "Member updated." });
+            setToast({ kind: "success", message: message ?? "Member updated." });
           }}
         />
       )}
