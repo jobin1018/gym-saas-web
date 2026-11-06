@@ -46,8 +46,28 @@ async function post(fn: string, token: string): Promise<Record<string, unknown>>
   return (await res.json()) as Record<string, unknown>;
 }
 
+// The Edge Function signs the URL against ITS OWN idea of the Supabase URL. In
+// local dev that is the Docker-internal http://kong:8000, which a phone or
+// browser can't reach. Point a storage signed URL at the public Supabase origin
+// this app already talks to; where the origins already match (production) this
+// changes nothing.
+function reachableQrUrl(raw: string | null): string | null {
+  if (!raw) return raw;
+  try {
+    const u = new URL(raw);
+    const pub = new URL(import.meta.env.VITE_SUPABASE_URL);
+    if (u.origin !== pub.origin && u.pathname.startsWith("/storage/v1/")) {
+      return `${pub.origin}${u.pathname}${u.search}`;
+    }
+  } catch {
+    /* leave it as is */
+  }
+  return raw;
+}
+
 export async function getPayPage(token: string): Promise<PayPageData> {
-  return (await post("get-pay-page", token)) as unknown as PayPageData;
+  const d = (await post("get-pay-page", token)) as unknown as PayPageData;
+  return { ...d, qr_url: reachableQrUrl(d.qr_url) };
 }
 
 export async function claimPaid(token: string): Promise<void> {

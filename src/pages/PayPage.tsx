@@ -61,6 +61,7 @@ export function PayPage() {
   const loadedAt = useRef(0);
   const expiresIn = useRef(300);
   const refreshing = useRef(false);
+  const lastImgRetry = useRef(0);
 
   const load = useCallback(
     async (initial: boolean) => {
@@ -182,7 +183,14 @@ export function PayPage() {
         claiming={claiming}
         claimError={claimError}
         onClaim={handleClaim}
-        onQrError={() => load(false)}
+        onQrError={() => {
+          // The signed link may have lapsed (e.g. phone asleep). Re-fetch at
+          // most once per 20 s so a QR that can't load never hammers the
+          // rate-limited endpoint.
+          if (Date.now() - lastImgRetry.current < 20000) return;
+          lastImgRetry.current = Date.now();
+          load(false);
+        }}
       />
     </Shell>
   );
