@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { StatCard } from "../components/StatCard";
+import { PaymentSetupAlerts } from "../components/PaymentSetupAlerts";
 
 type MonthKey = "this" | "last";
 
@@ -204,6 +205,8 @@ export function OwnerDashboard() {
           ))}
         </div>
       </div>
+
+      <PaymentSetupAlerts />
 
       {/* Member counts */}
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
