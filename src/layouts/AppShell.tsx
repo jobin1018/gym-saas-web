@@ -10,6 +10,7 @@ import {
   Gauge,
   Receipt,
   Settings,
+  BadgeCheck,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../contexts/AuthContext";
@@ -105,6 +106,13 @@ export function AppShell() {
                 className="transition-transform group-hover:scale-110"
               />
               Transactions
+            </NavLink>
+            <NavLink to="/payment-claims" className={linkClass}>
+              <BadgeCheck
+                size={18}
+                className="transition-transform group-hover:scale-110"
+              />
+              Payment claims
             </NavLink>
             {claims?.role === "owner" && (
               <NavLink to="/staff" className={linkClass}>

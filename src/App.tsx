@@ -23,6 +23,7 @@ import { AddMemberLinkPage } from "./pages/magicLink/AddMember";
 import { AddPtPackageLinkPage } from "./pages/magicLink/AddPtPackage";
 import { PayPage } from "./pages/PayPage";
 import { PaymentSettings } from "./pages/PaymentSettings";
+import { PaymentClaims } from "./pages/PaymentClaims";
 
 function RequireAuth({ children }: { children: ReactElement }) {
   const { status, claims } = useAuth();
@@ -86,6 +87,9 @@ export default function App() {
                 location by v_payments_ledger's own WHERE clause, not by
                 anything here. */}
             <Route path="/transactions" element={<Transactions />} />
+            {/* Owner + front_desk: list_pending_payment_claims() is scoped
+                server-side (front_desk to their own location). */}
+            <Route path="/payment-claims" element={<PaymentClaims />} />
             <Route
               path="/revenue"
               element={
