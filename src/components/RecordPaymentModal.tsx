@@ -54,6 +54,7 @@ export function RecordPaymentModal({
   onClose,
   onRecorded,
   onAlreadyPaid,
+  initialMethod = "cash",
 }: {
   subject: RecordPaymentSubject;
   onClose: () => void;
@@ -63,12 +64,15 @@ export function RecordPaymentModal({
   // PT only: package_already_paid means another desk got there first — the
   // caller refreshes its Paid badge.
   onAlreadyPaid?: () => void;
+  // Method preselected when the modal opens (e.g. "upi" from a pay-page claim).
+  // Defaults to cash, so existing callers behave exactly as before.
+  initialMethod?: PaymentMethod;
 }) {
   const today = todayUtc();
   const bounds = receivedAtBounds(today);
   const amount = subject.kind === "membership" ? subject.total : subject.price;
 
-  const [method, setMethod] = useState<PaymentMethod>("cash");
+  const [method, setMethod] = useState<PaymentMethod>(initialMethod);
   const [reference, setReference] = useState("");
   const [receivedAt, setReceivedAt] = useState(today);
   const [note, setNote] = useState("");
