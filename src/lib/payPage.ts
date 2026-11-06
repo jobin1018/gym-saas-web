@@ -1,0 +1,70 @@
+// Member-facing pay page client. Talks only to the two PUBLIC Edge Functions
+// (POST {token}, no JWT) — never to the database or to a Supabase session.
+
+const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+
+export type PayPageData = {
+  gym_name: string;
+  member_first_name: string;
+  plan_name: string;
+  subject: "membership" | "pt_package";
+  amount: number;
+  currency: string;
+  upi_id: string;
+  qr_url: string | null;
+  qr_url_expires_in: number;
+  options: { upi_qr: boolean; razorpay: boolean };
+  claimed_paid: boolean;
+  expires_at: string;
+};
+
+export type PayPageFailure = "not_found" | "paused" | "rate_limited" | "error";
+
+export class PayPageError extends Error {
+  kind: PayPageFailure;
+  constructor(kind: PayPageFailure) {
+    super(kind);
+    this.kind = kind;
+  }
+}
+
+async function post(fn: string, token: string): Promise<Record<string, unknown>> {
+  let res: Response;
+  try {
+    res = await fetch(`${FN_BASE}/${fn}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+  } catch {
+    throw new PayPageError("error");
+  }
+  if (res.status === 404) throw new PayPageError("not_found");
+  if (res.status === 403) throw new PayPageError("paused");
+  if (res.status === 429) throw new PayPageError("rate_limited");
+  if (!res.ok) throw new PayPageError("error");
+  return (await res.json()) as Record<string, unknown>;
+}
+
+export async function getPayPage(token: string): Promise<PayPageData> {
+  return (await post("get-pay-page", token)) as unknown as PayPageData;
+}
+
+export async function claimPaid(token: string): Promise<void> {
+  await post("claim-paid", token);
+}
+
+export function formatInr(amount: number): string {
+  return `₹${amount.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+}
+
+// upi://pay deep link. Amount has no thousands separators, max 2 decimals.
+export function upiDeepLink(upiId: string, gymName: string, amount: number): string {
+  const params = [
+    `pa=${encodeURIComponent(upiId)}`,
+    `pn=${encodeURIComponent(gymName)}`,
+    `am=${encodeURIComponent(amount.toFixed(2))}`,
+    "cu=INR",
+  ];
+  return `upi://pay?${params.join("&")}`;
+}

@@ -21,6 +21,7 @@ import { ClientDetail as RealClientDetail } from "./pages/coachReal/ClientDetail
 import { CoachQuickLog } from "./pages/coachReal/CoachQuickLog";
 import { AddMemberLinkPage } from "./pages/magicLink/AddMember";
 import { AddPtPackageLinkPage } from "./pages/magicLink/AddPtPackage";
+import { PayPage } from "./pages/PayPage";
 
 function RequireAuth({ children }: { children: ReactElement }) {
   const { status, claims } = useAuth();
@@ -140,6 +141,12 @@ export default function App() {
               nav/sidebar — reachable only via a magic link. */}
           <Route path="/members/add" element={<AddMemberLinkPage />} />
           <Route path="/pt/add" element={<AddPtPackageLinkPage />} />
+
+          {/* Member-facing UPI QR pay page — PUBLIC, outside RequireAuth and
+              AppShell like the magic links above: the member has no account,
+              the token in the URL is the credential (get-pay-page /
+              claim-paid are verify_jwt = false). */}
+          <Route path="/pay/:token" element={<PayPage />} />
 
           {/* Real coach section — real Supabase queries, RLS-scoped by
               assignment. Package-id-keyed (not member-id-keyed like the
