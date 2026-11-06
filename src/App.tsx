@@ -22,6 +22,7 @@ import { CoachQuickLog } from "./pages/coachReal/CoachQuickLog";
 import { AddMemberLinkPage } from "./pages/magicLink/AddMember";
 import { AddPtPackageLinkPage } from "./pages/magicLink/AddPtPackage";
 import { PayPage } from "./pages/PayPage";
+import { PaymentSettings } from "./pages/PaymentSettings";
 
 function RequireAuth({ children }: { children: ReactElement }) {
   const { status, claims } = useAuth();
@@ -98,6 +99,16 @@ export default function App() {
               element={
                 <RequireOwner>
                   <Staff />
+                </RequireOwner>
+              }
+            />
+            {/* Owner only: the page and org_payment_settings writes are
+                owner-scoped; front_desk gets bounced to / by RequireOwner. */}
+            <Route
+              path="/settings/payments"
+              element={
+                <RequireOwner>
+                  <PaymentSettings />
                 </RequireOwner>
               }
             />

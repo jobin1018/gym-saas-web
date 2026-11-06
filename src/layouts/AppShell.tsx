@@ -9,6 +9,7 @@ import {
   KeyRound,
   Gauge,
   Receipt,
+  Settings,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../contexts/AuthContext";
@@ -121,6 +122,15 @@ export function AppShell() {
               />
               Plans
             </NavLink>
+            {claims?.role === "owner" && (
+              <NavLink to="/settings/payments" className={linkClass}>
+                <Settings
+                  size={18}
+                  className="transition-transform group-hover:scale-110"
+                />
+                Payments
+              </NavLink>
+            )}
           </nav>
         </div>
         <div className="relative border-t border-white/10 pt-4">
